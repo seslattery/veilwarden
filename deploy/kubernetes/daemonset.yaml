@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: veilwarden
+  namespace: veilwarden
+  labels:
+    app: veilwarden
+spec:
+  selector:
+    matchLabels:
+      app: veilwarden
+  template:
+    metadata:
+      labels:
+        app: veilwarden
+    spec:
+      serviceAccountName: veilwarden
+      hostNetwork: true  # Node-local proxy
+      containers:
+      - name: veilwarden
+        image: veilwarden:latest
+        imagePullPolicy: IfNotPresent
+        args:
+        - --config=/etc/veilwarden/config.yaml
+        - --k8s-enabled=auto
+        ports:
+        - name: proxy
+          containerPort: 8088
+          hostPort: 8088
+          protocol: TCP
+        env:
+        - name: VEILWARDEN_SESSION_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: veilwarden-secrets
+              key: session-secret
+        - name: DOPPLER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: veilwarden-secrets
+              key: doppler-token
+        - name: DOPPLER_PROJECT
+          value: veilwarden
+        - name: DOPPLER_CONFIG
+          value: production
+        volumeMounts:
+        - name: config
+          mountPath: /etc/veilwarden
+          readOnly: true
+        - name: policies
+          mountPath: /etc/veilwarden/policies
+          readOnly: true
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8088
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8088
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: veilwarden-config
+      - name: policies
+        configMap:
+          name: veilwarden-policies

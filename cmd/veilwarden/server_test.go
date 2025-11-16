@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.opentelemetry.io/otel"
 	authv1 "k8s.io/api/authentication/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
@@ -183,7 +184,7 @@ func TestAuthenticateWithSessionSecret(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://veilwarden/test", nil)
 	req.Header.Set(sessionHeader, "test-secret")
 
-	ident, err := server.authenticate(req)
+	ident, err := server.authenticate(req.Context(), req)
 	if err != nil {
 		t.Fatalf("authentication failed: %v", err)
 	}
@@ -213,7 +214,7 @@ func TestAuthenticateMissingCredentials(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "http://veilwarden/test", nil)
 
-	_, err := server.authenticate(req)
+	_, err := server.authenticate(req.Context(), req)
 	if err == nil {
 		t.Fatal("expected authentication to fail with missing credentials")
 	}
@@ -229,7 +230,7 @@ func TestAuthenticateInvalidSessionSecret(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "http://veilwarden/test", nil)
 	req.Header.Set(sessionHeader, "wrong-secret")
 
-	_, err := server.authenticate(req)
+	_, err := server.authenticate(req.Context(), req)
 	if err == nil {
 		t.Fatal("expected authentication to fail with invalid secret")
 	}
@@ -260,16 +261,23 @@ func TestProxyServerAuthenticateK8s(t *testing.T) {
 		return true, review, nil
 	})
 
+	// Create noop metrics for testing
+	meter := otel.Meter("test")
+	k8sTokenReviewDuration, _ := meter.Float64Histogram("test.k8s.tokenreview.duration")
+	k8sTokenReviewErrors, _ := meter.Int64Counter("test.k8s.tokenreview.errors")
+
 	proxy := &proxyServer{
-		sessionSecret: "test-secret",
-		k8sAuth:       k8sAuth,
+		sessionSecret:          "test-secret",
+		k8sAuth:                k8sAuth,
+		k8sTokenReviewDuration: k8sTokenReviewDuration,
+		k8sTokenReviewErrors:   k8sTokenReviewErrors,
 	}
 
 	// Test Kubernetes authentication
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("Authorization", "Bearer valid-k8s-token")
 
-	identity, err := proxy.authenticate(req)
+	identity, err := proxy.authenticate(req.Context(), req)
 	if err != nil {
 		t.Fatalf("authenticate failed: %v", err)
 	}
@@ -299,7 +307,7 @@ func TestProxyServerAuthenticateSessionSecret(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.Header.Set("X-Session-Secret", "test-secret")
 
-	identity, err := proxy.authenticate(req)
+	identity, err := proxy.authenticate(req.Context(), req)
 	if err != nil {
 		t.Fatalf("authenticate failed: %v", err)
 	}
@@ -335,10 +343,17 @@ func TestProxyServerAuthenticatePriority(t *testing.T) {
 		return true, review, nil
 	})
 
+	// Create noop metrics for testing
+	meter := otel.Meter("test")
+	k8sTokenReviewDuration, _ := meter.Float64Histogram("test.k8s.tokenreview.duration")
+	k8sTokenReviewErrors, _ := meter.Int64Counter("test.k8s.tokenreview.errors")
+
 	proxy := &proxyServer{
-		sessionSecret: "session-secret",
-		k8sAuth:       k8sAuth,
-		userID:        "alice",
+		sessionSecret:          "session-secret",
+		k8sAuth:                k8sAuth,
+		k8sTokenReviewDuration: k8sTokenReviewDuration,
+		k8sTokenReviewErrors:   k8sTokenReviewErrors,
+		userID:                 "alice",
 	}
 
 	// Request with BOTH Bearer token and session secret
@@ -346,7 +361,7 @@ func TestProxyServerAuthenticatePriority(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer k8s-token")
 	req.Header.Set("X-Session-Secret", "session-secret")
 
-	identity, err := proxy.authenticate(req)
+	identity, err := proxy.authenticate(req.Context(), req)
 	if err != nil {
 		t.Fatalf("authenticate failed: %v", err)
 	}

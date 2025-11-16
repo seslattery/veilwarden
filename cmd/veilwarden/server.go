@@ -51,22 +51,24 @@ func (s *configSecretStore) Get(_ context.Context, id string) (string, error) {
 }
 
 type proxyServer struct {
-	sessionSecret    string
-	routes           map[string]route
-	secretStore      secretStore
-	httpClient       *http.Client
-	logger           *slog.Logger
-	tracer           trace.Tracer
-	requestCounter   metric.Int64Counter
-	requestDuration  metric.Float64Histogram
-	errorCounter     metric.Int64Counter
-	upstreamDuration metric.Float64Histogram
-	policyEngine     PolicyEngine
-	policyDecisions  metric.Int64Counter
-	k8sAuth          *k8sAuthenticator // Kubernetes authenticator for dual-mode auth
-	userID           string
-	userEmail        string
-	userOrg          string
+	sessionSecret          string
+	routes                 map[string]route
+	secretStore            secretStore
+	httpClient             *http.Client
+	logger                 *slog.Logger
+	tracer                 trace.Tracer
+	requestCounter         metric.Int64Counter
+	requestDuration        metric.Float64Histogram
+	errorCounter           metric.Int64Counter
+	upstreamDuration       metric.Float64Histogram
+	policyEngine           PolicyEngine
+	policyDecisions        metric.Int64Counter
+	k8sAuth                *k8sAuthenticator // Kubernetes authenticator for dual-mode auth
+	k8sTokenReviewDuration metric.Float64Histogram
+	k8sTokenReviewErrors   metric.Int64Counter
+	userID                 string
+	userEmail              string
+	userOrg                string
 }
 
 func newProxyServer(routes map[string]route, sessionSecret string, store secretStore, logger *slog.Logger, policyEngine PolicyEngine, k8sAuth *k8sAuthenticator, userID, userEmail, userOrg string) *proxyServer {
@@ -98,6 +100,11 @@ func newProxyServer(routes map[string]route, sessionSecret string, store secretS
 		metric.WithUnit("s"))
 	policyDecisions, _ := meter.Int64Counter("veilwarden.policy.decisions.total",
 		metric.WithDescription("Total number of policy decisions by result"))
+	k8sTokenReviewDuration, _ := meter.Float64Histogram("veilwarden.k8s.tokenreview.duration",
+		metric.WithDescription("Duration of Kubernetes TokenReview API calls in seconds"),
+		metric.WithUnit("s"))
+	k8sTokenReviewErrors, _ := meter.Int64Counter("veilwarden.k8s.tokenreview.errors.total",
+		metric.WithDescription("Total number of Kubernetes TokenReview failures by reason"))
 
 	return &proxyServer{
 		sessionSecret: sessionSecret,
@@ -106,18 +113,20 @@ func newProxyServer(routes map[string]route, sessionSecret string, store secretS
 		httpClient: &http.Client{
 			Timeout: 15 * time.Second,
 		},
-		logger:           logger,
-		tracer:           tracer,
-		requestCounter:   requestCounter,
-		requestDuration:  requestDuration,
-		errorCounter:     errorCounter,
-		upstreamDuration: upstreamDuration,
-		policyEngine:     policyEngine,
-		policyDecisions:  policyDecisions,
-		k8sAuth:          k8sAuth,
-		userID:           userID,
-		userEmail:        userEmail,
-		userOrg:          userOrg,
+		logger:                 logger,
+		tracer:                 tracer,
+		requestCounter:         requestCounter,
+		requestDuration:        requestDuration,
+		errorCounter:           errorCounter,
+		upstreamDuration:       upstreamDuration,
+		policyEngine:           policyEngine,
+		policyDecisions:        policyDecisions,
+		k8sAuth:                k8sAuth,
+		k8sTokenReviewDuration: k8sTokenReviewDuration,
+		k8sTokenReviewErrors:   k8sTokenReviewErrors,
+		userID:                 userID,
+		userEmail:              userEmail,
+		userOrg:                userOrg,
 	}
 }
 
@@ -141,11 +150,8 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	defer span.End()
 
-	// Record request counter
-	s.requestCounter.Add(ctx, 1)
-
 	// Authenticate request and get identity
-	ident, err := s.authenticate(r)
+	ident, err := s.authenticate(ctx, r)
 	if err != nil {
 		s.recordError(ctx, "UNAUTHORIZED", reqID)
 		s.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error(), reqID)
@@ -156,6 +162,17 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Add identity type to span
 	span.SetAttributes(attribute.String("identity.type", ident.Type()))
+
+	// Record request counter with identity attributes
+	requestAttrs := []attribute.KeyValue{}
+	switch id := ident.(type) {
+	case *k8sIdentity:
+		requestAttrs = append(requestAttrs,
+			attribute.String("namespace", id.namespace),
+			attribute.String("service_account", id.serviceAccount),
+		)
+	}
+	s.requestCounter.Add(ctx, 1, metric.WithAttributes(requestAttrs...))
 
 	// Extract agent ID for policy context (optional header)
 	agentID := strings.TrimSpace(r.Header.Get("X-Agent-Id"))
@@ -341,14 +358,26 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 // authenticate validates the request using Kubernetes token or session secret.
 // Priority: 1) K8s bearer token, 2) Session secret (backwards compat).
 // Returns the authenticated identity on success.
-func (s *proxyServer) authenticate(r *http.Request) (identity, error) {
+func (s *proxyServer) authenticate(ctx context.Context, r *http.Request) (identity, error) {
 	// Priority 1: Kubernetes Service Account token
 	if s.k8sAuth != nil && s.k8sAuth.enabled {
 		authHeader := r.Header.Get("Authorization")
 		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
 			token := strings.TrimPrefix(authHeader, "Bearer ")
-			k8sIdent, err := s.k8sAuth.authenticate(r.Context(), token)
+
+			// Measure TokenReview API duration
+			startTime := time.Now()
+			k8sIdent, err := s.k8sAuth.authenticate(ctx, token)
+			duration := time.Since(startTime).Seconds()
+
+			// Record TokenReview duration
+			s.k8sTokenReviewDuration.Record(ctx, duration)
+
 			if err != nil {
+				// Classify error reason
+				reason := classifyTokenReviewError(err)
+				s.k8sTokenReviewErrors.Add(ctx, 1,
+					metric.WithAttributes(attribute.String("reason", reason)))
 				return nil, fmt.Errorf("kubernetes authentication failed: %w", err)
 			}
 			return k8sIdent, nil
@@ -371,6 +400,22 @@ func (s *proxyServer) authenticate(r *http.Request) (identity, error) {
 		userEmail: s.userEmail,
 		userOrg:   s.userOrg,
 	}, nil
+}
+
+// classifyTokenReviewError categorizes TokenReview errors for metrics.
+func classifyTokenReviewError(err error) string {
+	errStr := err.Error()
+	if strings.Contains(errStr, "expired") {
+		return "expired"
+	}
+	if strings.Contains(errStr, "invalid") || strings.Contains(errStr, "authentication failed") {
+		return "invalid"
+	}
+	if strings.Contains(errStr, "connection") || strings.Contains(errStr, "network") ||
+	   strings.Contains(errStr, "timeout") || strings.Contains(errStr, "api call failed") {
+		return "network_error"
+	}
+	return "unknown"
 }
 
 func buildUpstreamURL(rt route, in *url.URL) (string, error) {
