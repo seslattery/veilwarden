@@ -63,12 +63,13 @@ type proxyServer struct {
 	upstreamDuration metric.Float64Histogram
 	policyEngine     PolicyEngine
 	policyDecisions  metric.Int64Counter
+	k8sAuth          *k8sAuthenticator // Kubernetes authenticator for dual-mode auth
 	userID           string
 	userEmail        string
 	userOrg          string
 }
 
-func newProxyServer(routes map[string]route, sessionSecret string, store secretStore, logger *slog.Logger, policyEngine PolicyEngine, userID, userEmail, userOrg string) *proxyServer {
+func newProxyServer(routes map[string]route, sessionSecret string, store secretStore, logger *slog.Logger, policyEngine PolicyEngine, k8sAuth *k8sAuthenticator, userID, userEmail, userOrg string) *proxyServer {
 	if store == nil {
 		store = &configSecretStore{secrets: map[string]string{}}
 	}
@@ -113,6 +114,7 @@ func newProxyServer(routes map[string]route, sessionSecret string, store secretS
 		upstreamDuration: upstreamDuration,
 		policyEngine:     policyEngine,
 		policyDecisions:  policyDecisions,
+		k8sAuth:          k8sAuth,
 		userID:           userID,
 		userEmail:        userEmail,
 		userOrg:          userOrg,
@@ -142,7 +144,9 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Record request counter
 	s.requestCounter.Add(ctx, 1)
 
-	if err := s.authenticate(r.Header); err != nil {
+	// Authenticate request and get identity
+	ident, err := s.authenticate(r)
+	if err != nil {
 		s.recordError(ctx, "UNAUTHORIZED", reqID)
 		s.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", err.Error(), reqID)
 		span.SetStatus(codes.Error, "authentication failed")
@@ -150,23 +154,35 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Add identity type to span
+	span.SetAttributes(attribute.String("identity.type", ident.Type()))
+
 	// Extract agent ID for policy context (optional header)
 	agentID := strings.TrimSpace(r.Header.Get("X-Agent-Id"))
 
 	hostHeader := strings.TrimSpace(r.Header.Get(upstreamHeader))
 
-	// Policy decision point: Check if request is allowed before processing
+	// Convert to PolicyInput struct for engine (backwards compatibility)
 	policyInput := PolicyInput{
 		Method:       r.Method,
 		Path:         r.URL.Path,
 		Query:        r.URL.RawQuery,
 		UpstreamHost: hostHeader,
 		AgentID:      agentID,
-		UserID:       s.userID,
-		UserEmail:    s.userEmail,
-		UserOrg:      s.userOrg,
 		RequestID:    reqID,
 		Timestamp:    time.Now(),
+	}
+
+	// Merge identity attributes into PolicyInput based on type
+	switch id := ident.(type) {
+	case *staticIdentity:
+		policyInput.UserID = id.userID
+		policyInput.UserEmail = id.userEmail
+		policyInput.UserOrg = id.userOrg
+	case *k8sIdentity:
+		policyInput.Namespace = id.namespace
+		policyInput.ServiceAccount = id.serviceAccount
+		policyInput.PodName = id.podName
 	}
 
 	policyDecision, err := s.policyEngine.Decide(ctx, policyInput)
@@ -322,15 +338,39 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		"status", resp.StatusCode)
 }
 
-func (s *proxyServer) authenticate(h http.Header) error {
-	secret := strings.TrimSpace(h.Get(sessionHeader))
-	if secret == "" {
-		return fmt.Errorf("missing session secret: add header '%s: <your-session-secret>' to your request (get secret from VEILWARDEN_SESSION_SECRET environment variable)", sessionHeader)
+// authenticate validates the request using Kubernetes token or session secret.
+// Priority: 1) K8s bearer token, 2) Session secret (backwards compat).
+// Returns the authenticated identity on success.
+func (s *proxyServer) authenticate(r *http.Request) (identity, error) {
+	// Priority 1: Kubernetes Service Account token
+	if s.k8sAuth != nil && s.k8sAuth.enabled {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			k8sIdent, err := s.k8sAuth.authenticate(r.Context(), token)
+			if err != nil {
+				return nil, fmt.Errorf("kubernetes authentication failed: %w", err)
+			}
+			return k8sIdent, nil
+		}
 	}
-	if secret != s.sessionSecret {
-		return fmt.Errorf("invalid session secret: the provided session secret does not match. Verify VEILWARDEN_SESSION_SECRET matches the value used to start the proxy")
+
+	// Priority 2: Session secret (backwards compatibility)
+	sessionSecret := r.Header.Get(sessionHeader)
+	if sessionSecret == "" {
+		return nil, fmt.Errorf("missing authentication: no bearer token or session secret")
 	}
-	return nil
+
+	if sessionSecret != s.sessionSecret {
+		return nil, fmt.Errorf("invalid session secret")
+	}
+
+	// Return static user identity from config
+	return &staticIdentity{
+		userID:    s.userID,
+		userEmail: s.userEmail,
+		userOrg:   s.userOrg,
+	}, nil
 }
 
 func buildUpstreamURL(rt route, in *url.URL) (string, error) {

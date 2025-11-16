@@ -1,19 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
-	"github.com/open-policy-agent/opa/sdk"
+	"github.com/open-policy-agent/opa/rego"
 )
 
 // opaPolicyEngine implements PolicyEngine using Open Policy Agent.
 type opaPolicyEngine struct {
-	opa          *sdk.OPA
+	query        rego.PreparedEvalQuery
 	decisionPath string
 }
 
@@ -34,42 +34,33 @@ func newOPAPolicyEngine(ctx context.Context, cfg policyConfig) (*opaPolicyEngine
 		return nil, fmt.Errorf("no .rego files found in %s", cfg.PolicyPath)
 	}
 
-	// Create OPA SDK configuration
-	config := []byte(`{
-		"services": {},
-		"bundles": {},
-		"decision_logs": {
-			"console": false
-		}
-	}`)
-
-	// Initialize OPA SDK
-	opa, err := sdk.New(ctx, sdk.Options{
-		Config: bytes.NewReader(config),
-		// Provide policies directly via in-memory bundle
-		Ready: func(ctx context.Context) {
-			// OPA is ready
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize OPA SDK: %w", err)
-	}
-
-	// Load policies into OPA
-	for path, content := range policies {
-		if err := opa.InsertPolicy(ctx, path, []byte(content)); err != nil {
-			opa.Stop(ctx)
-			return nil, fmt.Errorf("insert policy %s: %w", path, err)
-		}
-	}
-
+	// Build rego query with all loaded policy modules
 	decisionPath := cfg.DecisionPath
 	if decisionPath == "" {
 		decisionPath = "veilwarden/authz/allow"
 	}
 
+	// Build the query string - convert path like "veilwarden/authz/allow" to "data.veilwarden.authz.allow"
+	queryPath := "data." + strings.ReplaceAll(decisionPath, "/", ".")
+
+	// Create rego instance with all policy modules
+	regoArgs := []func(*rego.Rego){
+		rego.Query(queryPath),
+	}
+
+	// Add each policy module
+	for path, content := range policies {
+		regoArgs = append(regoArgs, rego.Module(path, content))
+	}
+
+	// Create and prepare the query
+	query, err := rego.New(regoArgs...).PrepareForEval(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("prepare rego query: %w", err)
+	}
+
 	return &opaPolicyEngine{
-		opa:          opa,
+		query:        query,
 		decisionPath: decisionPath,
 	}, nil
 }
@@ -122,26 +113,54 @@ func (p *opaPolicyEngine) Decide(ctx context.Context, input PolicyInput) (Policy
 		"timestamp":     input.Timestamp.Format(time.RFC3339),
 	}
 
-	// Query OPA for decision
-	result, err := p.opa.Decision(ctx, sdk.DecisionOptions{
-		Path:  p.decisionPath,
-		Input: inputMap,
-	})
-	if err != nil {
-		return PolicyDecision{}, fmt.Errorf("OPA decision: %w", err)
+	// Add Kubernetes identity fields if present
+	if input.Namespace != "" {
+		inputMap["namespace"] = input.Namespace
+	}
+	if input.ServiceAccount != "" {
+		inputMap["service_account"] = input.ServiceAccount
+	}
+	if input.PodName != "" {
+		inputMap["pod_name"] = input.PodName
 	}
 
-	// Extract boolean result
-	allowed, ok := result.Result.(bool)
+	// Evaluate the prepared query
+	results, err := p.query.Eval(ctx, rego.EvalInput(inputMap))
+	if err != nil {
+		return PolicyDecision{}, fmt.Errorf("OPA eval: %w", err)
+	}
+
+	// Check if we got results
+	if len(results) == 0 {
+		return PolicyDecision{
+			Allowed: false,
+			Reason:  "denied by OPA policy (no results)",
+			Metadata: map[string]string{
+				"engine": "opa",
+			},
+		}, nil
+	}
+
+	// Extract boolean result from first result
+	if len(results[0].Expressions) == 0 {
+		return PolicyDecision{
+			Allowed: false,
+			Reason:  "denied by OPA policy (no expressions)",
+			Metadata: map[string]string{
+				"engine": "opa",
+			},
+		}, nil
+	}
+
+	allowed, ok := results[0].Expressions[0].Value.(bool)
 	if !ok {
-		return PolicyDecision{}, fmt.Errorf("OPA decision returned non-boolean: %T", result.Result)
+		return PolicyDecision{}, fmt.Errorf("OPA decision returned non-boolean: %T", results[0].Expressions[0].Value)
 	}
 
 	decision := PolicyDecision{
 		Allowed: allowed,
 		Metadata: map[string]string{
-			"engine":      "opa",
-			"decision_id": result.ID,
+			"engine": "opa",
 		},
 	}
 
@@ -156,7 +175,5 @@ func (p *opaPolicyEngine) Decide(ctx context.Context, input PolicyInput) (Policy
 
 // Close shuts down the OPA instance.
 func (p *opaPolicyEngine) Close() {
-	if p.opa != nil {
-		p.opa.Stop(context.Background())
-	}
+	// Prepared queries don't need explicit cleanup
 }

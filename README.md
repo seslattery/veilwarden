@@ -126,6 +126,37 @@ The script:
 
 `DOPPLER_PROJECT` and `DOPPLER_CONFIG` default to `veilwarden` / `dev_personal` if unset; override them if your Doppler context differs. `DOPPLER_TOKEN` always needs to be exported.
 
+### Local Demo + Doppler + OPA
+
+To test the full integration of Doppler secret management and OPA policy enforcement:
+
+```bash
+export DOPPLER_TOKEN=dp.st.***
+export DOPPLER_PROJECT=veilwarden
+export DOPPLER_CONFIG=dev_personal
+
+./scripts/test_local_with_doppler_and_opa.sh
+```
+
+This script demonstrates:
+
+- **Doppler secret retrieval** with automatic cache management
+- **OPA policy enforcement** using policies from `policies/` directory
+- **Multiple test scenarios**:
+  - ✅ Allowed GET request from engineering user
+  - ✅ Allowed POST to GitHub API from ci-agent
+  - ❌ Denied POST from unknown agent
+  - ❌ Denied DELETE request
+
+The script runs with a default user context (`alice` from `engineering` org). To test different access patterns:
+
+```bash
+USER_ID=bob USER_EMAIL=bob@external.com USER_ORG=external \
+  ./scripts/test_local_with_doppler_and_opa.sh
+```
+
+All test responses are saved to `/tmp/veilwarden-opa-*.txt` for inspection.
+
 ## OPA Policy Integration
 
 Veilwarden supports Open Policy Agent (OPA) for production-grade authorization policies.
@@ -198,3 +229,50 @@ Policies receive comprehensive request context:
 Policies must define a boolean decision at the configured path (default: `veilwarden/authz/allow`).
 
 See `policies/example.rego` for complete examples.
+
+## Testing
+
+### Unit Tests
+
+Run the standard unit tests:
+
+```bash
+go test ./cmd/veilwarden
+```
+
+### End-to-End Tests
+
+Comprehensive e2e tests that spin up real proxy and echo servers:
+
+```bash
+# Run all e2e tests (skips Doppler tests if DOPPLER_TOKEN not set)
+go test -v -run TestE2E ./cmd/veilwarden
+
+# Run specific e2e test
+go test -v -run TestE2EBasicProxy ./cmd/veilwarden
+go test -v -run TestE2EOPAIntegration ./cmd/veilwarden
+```
+
+Available e2e tests:
+
+- **TestE2EBasicProxy** - Tests basic proxy functionality with secret injection
+- **TestE2EDopplerIntegration** - Tests Doppler secret retrieval (requires DOPPLER_TOKEN)
+- **TestE2EOPAIntegration** - Tests OPA policy enforcement with multiple scenarios
+- **TestE2EDopplerWithOPA** - Tests full Doppler + OPA integration (requires DOPPLER_TOKEN)
+
+To run Doppler integration tests:
+
+```bash
+export DOPPLER_TOKEN=dp.st.***
+export DOPPLER_PROJECT=veilwarden
+export DOPPLER_CONFIG=dev_personal
+
+go test -v -run TestE2EDoppler ./cmd/veilwarden
+```
+
+The e2e tests automatically:
+- Find free ports for servers
+- Start echo and proxy servers
+- Wait for servers to be ready
+- Execute test requests
+- Clean up resources on completion

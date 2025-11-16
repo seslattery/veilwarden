@@ -59,7 +59,7 @@ allow if {
 
 	server := newProxyServer(routes, "session", &configSecretStore{
 		secrets: map[string]string{"test-secret": "secret-value"},
-	}, nil, engine, "alice", "alice@company.com", "engineering")
+	}, nil, engine, nil, "alice", "alice@company.com", "engineering")
 
 	server.httpClient = &http.Client{
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
@@ -130,7 +130,7 @@ allow if {
 
 	server := newProxyServer(routes, "session", &configSecretStore{
 		secrets: map[string]string{"test-secret": "secret-value"},
-	}, nil, engine, "bob", "bob@company.com", "external")
+	}, nil, engine, nil, "bob", "bob@company.com", "external")
 
 	// Test denied request (POST from external user)
 	req := httptest.NewRequest(http.MethodPost, "http://veilwarden/admin", nil)

@@ -154,3 +154,101 @@ policy:
 		t.Error("expected default_allow false")
 	}
 }
+
+func TestParseConfigWithKubernetes(t *testing.T) {
+	yaml := `
+routes:
+  - upstream_host: api.example.com
+    upstream_scheme: https
+    secret_id: TEST_SECRET
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+kubernetes:
+  enabled: "true"
+  api_server: "https://my-k8s-api.example.com"
+  token_path: "/custom/path/to/token"
+  validate_method: "tokenreview"
+`
+
+	cfg, err := parseConfig([]byte(yaml))
+	if err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	if cfg.kubernetes.enabled != "true" {
+		t.Errorf("expected enabled 'true', got %s", cfg.kubernetes.enabled)
+	}
+	if cfg.kubernetes.apiServer != "https://my-k8s-api.example.com" {
+		t.Errorf("expected api_server 'https://my-k8s-api.example.com', got %s", cfg.kubernetes.apiServer)
+	}
+	if cfg.kubernetes.tokenPath != "/custom/path/to/token" {
+		t.Errorf("expected token_path '/custom/path/to/token', got %s", cfg.kubernetes.tokenPath)
+	}
+	if cfg.kubernetes.validateMethod != "tokenreview" {
+		t.Errorf("expected validate_method 'tokenreview', got %s", cfg.kubernetes.validateMethod)
+	}
+}
+
+func TestParseConfigKubernetesDefaults(t *testing.T) {
+	// Test that kubernetes config has proper defaults when not specified
+	yaml := `
+routes:
+  - upstream_host: api.example.com
+    upstream_scheme: https
+    secret_id: TEST_SECRET
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+`
+
+	cfg, err := parseConfig([]byte(yaml))
+	if err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	// Should have default values
+	if cfg.kubernetes.enabled != "auto" {
+		t.Errorf("expected default enabled 'auto', got %s", cfg.kubernetes.enabled)
+	}
+	if cfg.kubernetes.apiServer != "https://kubernetes.default.svc" {
+		t.Errorf("expected default api_server 'https://kubernetes.default.svc', got %s", cfg.kubernetes.apiServer)
+	}
+	if cfg.kubernetes.tokenPath != "/var/run/secrets/kubernetes.io/serviceaccount/token" {
+		t.Errorf("expected default token_path '/var/run/secrets/kubernetes.io/serviceaccount/token', got %s", cfg.kubernetes.tokenPath)
+	}
+	if cfg.kubernetes.validateMethod != "tokenreview" {
+		t.Errorf("expected default validate_method 'tokenreview', got %s", cfg.kubernetes.validateMethod)
+	}
+}
+
+func TestParseConfigKubernetesPartialOverride(t *testing.T) {
+	// Test that only specified kubernetes fields are overridden
+	yaml := `
+routes:
+  - upstream_host: api.example.com
+    upstream_scheme: https
+    secret_id: TEST_SECRET
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+kubernetes:
+  enabled: "false"
+`
+
+	cfg, err := parseConfig([]byte(yaml))
+	if err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	if cfg.kubernetes.enabled != "false" {
+		t.Errorf("expected enabled 'false', got %s", cfg.kubernetes.enabled)
+	}
+	// Other fields should have defaults
+	if cfg.kubernetes.apiServer != "https://kubernetes.default.svc" {
+		t.Errorf("expected default api_server, got %s", cfg.kubernetes.apiServer)
+	}
+	if cfg.kubernetes.tokenPath != "/var/run/secrets/kubernetes.io/serviceaccount/token" {
+		t.Errorf("expected default token_path, got %s", cfg.kubernetes.tokenPath)
+	}
+	if cfg.kubernetes.validateMethod != "tokenreview" {
+		t.Errorf("expected default validate_method, got %s", cfg.kubernetes.validateMethod)
+	}
+}

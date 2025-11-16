@@ -2,8 +2,45 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
 	"time"
 )
+
+// identity represents an authenticated entity (user or workload).
+type identity interface {
+	Type() string                         // "static", "kubernetes"
+	Attributes() map[string]string        // All identity attributes
+	PolicyInput() map[string]interface{}  // OPA policy input fields
+}
+
+// staticIdentity represents static user identity from config.
+type staticIdentity struct {
+	userID    string
+	userEmail string
+	userOrg   string
+}
+
+func (i *staticIdentity) Type() string {
+	return "static"
+}
+
+func (i *staticIdentity) Attributes() map[string]string {
+	return map[string]string{
+		"user_id":    i.userID,
+		"user_email": i.userEmail,
+		"user_org":   i.userOrg,
+	}
+}
+
+func (i *staticIdentity) PolicyInput() map[string]interface{} {
+	return map[string]interface{}{
+		"user_id":    i.userID,
+		"user_email": i.userEmail,
+		"user_org":   i.userOrg,
+	}
+}
 
 // PolicyEngine defines the interface for making authorization decisions.
 // This abstraction allows for simple config-based policies (MVP) and future
@@ -27,6 +64,11 @@ type PolicyInput struct {
 	UserID    string // from CLI flags (Doppler context)
 	UserEmail string // from CLI flags (Doppler context)
 	UserOrg   string // from CLI flags (Doppler context)
+
+	// Kubernetes identity context (for k8s workloads)
+	Namespace      string // Kubernetes namespace
+	ServiceAccount string // Kubernetes service account
+	PodName        string // Kubernetes pod name (optional)
 
 	// Resource context
 	SecretID string // which secret would be used (empty if route not resolved yet)
@@ -93,4 +135,39 @@ func (p *configPolicyEngine) Decide(ctx context.Context, input PolicyInput) (Pol
 	}
 
 	return decision, nil
+}
+
+// buildPolicyInput constructs a policy input map from request context and identity.
+func buildPolicyInput(r *http.Request, upstreamHost string, ident identity) map[string]interface{} {
+	agentID := r.Header.Get("X-Agent-Id")
+	requestID := r.Header.Get("X-Request-Id")
+	if requestID == "" {
+		requestID = generateRequestID()
+	}
+
+	input := map[string]interface{}{
+		"method":        r.Method,
+		"path":          r.URL.Path,
+		"query":         r.URL.RawQuery,
+		"upstream_host": upstreamHost,
+		"agent_id":      agentID,
+		"request_id":    requestID,
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// Merge identity-specific fields
+	for k, v := range ident.PolicyInput() {
+		input[k] = v
+	}
+
+	return input
+}
+
+// generateRequestID creates a random request ID for tracking.
+func generateRequestID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(bytes)
 }
