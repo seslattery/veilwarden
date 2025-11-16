@@ -1,5 +1,7 @@
 # Veilwarden
 
+## EXPERIMENTAL USE ONLY
+
 **Stop putting API keys in your code. Start using zero-trust egress.**
 
 Veilwarden is a self-hosted HTTP proxy that injects API secrets into outbound requests so your applications or AI Agents never handle credentials directly. When running on kubernetes, automatically authenticate with workload identity for secretless access. OPA policies control which services access which APIs.
