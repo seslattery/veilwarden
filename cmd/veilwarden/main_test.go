@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,5 +80,43 @@ func TestBuildSecretStoreMissingConfigValues(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected error for missing secret values")
+	}
+}
+
+func TestBuildPolicyEngineConfig(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        policyConfig
+		expectType string
+	}{
+		{
+			name: "disabled returns config engine",
+			cfg: policyConfig{
+				Enabled: false,
+			},
+			expectType: "*main.configPolicyEngine",
+		},
+		{
+			name: "config engine enabled",
+			cfg: policyConfig{
+				Enabled:      true,
+				Engine:       "config",
+				DefaultAllow: true,
+			},
+			expectType: "*main.configPolicyEngine",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := buildPolicyEngine(context.Background(), tt.cfg)
+			if engine == nil {
+				t.Fatal("expected engine, got nil")
+			}
+			actualType := fmt.Sprintf("%T", engine)
+			if actualType != tt.expectType {
+				t.Errorf("expected type %s, got %s", tt.expectType, actualType)
+			}
+		})
 	}
 }

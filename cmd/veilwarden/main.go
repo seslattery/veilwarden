@@ -70,7 +70,7 @@ func main() {
 	}
 
 	// Initialize policy engine
-	policyEngine := newConfigPolicyEngine(appCfg.policy)
+	policyEngine := buildPolicyEngine(ctx, appCfg.policy)
 
 	server := newProxyServer(appCfg.routes, cfg.sessionSecret, store, logger, policyEngine, cfg.userID, cfg.userEmail, cfg.userOrg)
 
@@ -193,6 +193,40 @@ func buildSecretStore(cfg runConfig, appCfg *appConfig) (secretStore, error) {
 			"Add these secrets to the 'secrets' section in your config file", strings.Join(missing, ", "))
 	}
 	return &configSecretStore{secrets: appCfg.secrets}, nil
+}
+
+func buildPolicyEngine(ctx context.Context, cfg policyConfig) PolicyEngine {
+	// If policy disabled, return allow-all config engine
+	if !cfg.Enabled {
+		return newConfigPolicyEngine(policyConfig{
+			Enabled:      false,
+			DefaultAllow: true,
+		})
+	}
+
+	// Select engine based on config
+	switch cfg.Engine {
+	case "opa":
+		engine, err := newOPAPolicyEngine(ctx, cfg)
+		if err != nil {
+			slog.Error("Failed to initialize OPA policy engine",
+				"error", err,
+				"hint", "Verify policy_path exists and contains valid .rego files")
+			os.Exit(1)
+		}
+		slog.Info("OPA policy engine initialized",
+			"policy_path", cfg.PolicyPath,
+			"decision_path", cfg.DecisionPath)
+		return engine
+	case "config", "":
+		return newConfigPolicyEngine(cfg)
+	default:
+		slog.Error("Unknown policy engine",
+			"engine", cfg.Engine,
+			"hint", "Valid engines: 'config', 'opa'")
+		os.Exit(1)
+		return nil
+	}
 }
 
 func firstNonEmpty(values ...string) string {
