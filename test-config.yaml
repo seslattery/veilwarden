@@ -1,0 +1,10 @@
+secrets:
+  - id: echo-token
+    value: demo-token
+
+routes:
+  - upstream_host: 127.0.0.1:9090
+    upstream_scheme: http
+    secret_id: echo-token
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"

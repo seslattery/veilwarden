@@ -1,0 +1,6 @@
+routes:
+  - upstream_host: httpbin.org
+    upstream_scheme: https
+    secret_id: HTTPBIN_API_KEY
+    inject_header: X-Api-Key
+    header_value_template: "{{secret}}"
