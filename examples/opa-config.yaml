@@ -1,0 +1,23 @@
+# Example veilwarden configuration with OPA policy engine
+
+routes:
+  - upstream_host: api.github.com
+    upstream_scheme: https
+    secret_id: GITHUB_TOKEN
+    inject_header: Authorization
+    header_value_template: "token {{secret}}"
+
+  - upstream_host: api.stripe.com
+    upstream_scheme: https
+    secret_id: STRIPE_API_KEY
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+
+# OPA Policy Configuration
+policy:
+  enabled: true
+  engine: opa                          # Use OPA engine instead of config
+  policy_path: policies/               # Directory containing .rego files
+  decision_path: veilwarden/authz/allow # OPA query path (default)
+
+# Note: secrets section omitted when using Doppler

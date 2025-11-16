@@ -125,3 +125,76 @@ The script:
 - sends a sample request and prints the echo response so you can confirm the injected `X-Doppler-Secret` header.
 
 `DOPPLER_PROJECT` and `DOPPLER_CONFIG` default to `veilwarden` / `dev_personal` if unset; override them if your Doppler context differs. `DOPPLER_TOKEN` always needs to be exported.
+
+## OPA Policy Integration
+
+Veilwarden supports Open Policy Agent (OPA) for production-grade authorization policies.
+
+### Enabling OPA
+
+1. **Create policy files** in a directory (e.g., `policies/`):
+
+```rego
+package veilwarden.authz
+
+import rego.v1
+
+default allow := false
+
+# Allow GET requests from engineering
+allow if {
+    input.method == "GET"
+    input.user_org == "engineering"
+}
+
+# Allow CI agents to POST to GitHub
+allow if {
+    input.method == "POST"
+    input.upstream_host == "api.github.com"
+    input.agent_id == "ci-agent"
+}
+```
+
+2. **Configure veilwarden.yaml**:
+
+```yaml
+policy:
+  enabled: true
+  engine: opa
+  policy_path: policies/
+  decision_path: veilwarden/authz/allow
+```
+
+3. **Start with user context**:
+
+```bash
+veilwarden --config veilwarden.yaml \
+  --user-id alice \
+  --user-email alice@company.com \
+  --user-org engineering
+```
+
+### Policy Input Structure
+
+Policies receive comprehensive request context:
+
+```json
+{
+  "method": "POST",
+  "path": "/repos/user/repo",
+  "query": "page=1",
+  "upstream_host": "api.github.com",
+  "agent_id": "cli-tool",
+  "user_id": "alice",
+  "user_email": "alice@company.com",
+  "user_org": "engineering",
+  "request_id": "abc123",
+  "timestamp": "2025-11-16T12:00:00Z"
+}
+```
+
+### Decision Path
+
+Policies must define a boolean decision at the configured path (default: `veilwarden/authz/allow`).
+
+See `policies/example.rego` for complete examples.
