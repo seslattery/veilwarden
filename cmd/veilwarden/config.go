@@ -10,14 +10,18 @@ import (
 )
 
 type fileConfig struct {
-	Routes  []routeEntry  `yaml:"routes"`
-	Secrets []secretEntry `yaml:"secrets"`
-	Policy  *policyEntry  `yaml:"policy"`
+	Routes     []routeEntry     `yaml:"routes"`
+	Secrets    []secretEntry    `yaml:"secrets"`
+	Policy     *policyEntry     `yaml:"policy"`
+	Kubernetes *kubernetesEntry `yaml:"kubernetes"`
 }
 
 type policyEntry struct {
-	Enabled      bool `yaml:"enabled"`
-	DefaultAllow bool `yaml:"default_allow"`
+	Enabled      bool   `yaml:"enabled"`
+	DefaultAllow bool   `yaml:"default_allow"`
+	Engine       string `yaml:"engine"`        // "config" or "opa"
+	PolicyPath   string `yaml:"policy_path"`   // path to .rego files (for opa engine)
+	DecisionPath string `yaml:"decision_path"` // OPA query path (default: veilwarden/authz/allow)
 }
 
 type routeEntry struct {
@@ -33,10 +37,25 @@ type secretEntry struct {
 	Value string `yaml:"value"`
 }
 
+type kubernetesEntry struct {
+	Enabled        string `yaml:"enabled"`         // "auto", "true", "false"
+	APIServer      string `yaml:"api_server"`      // Kubernetes API server URL
+	TokenPath      string `yaml:"token_path"`      // Path to service account token
+	ValidateMethod string `yaml:"validate_method"` // "tokenreview", "jwks" (future)
+}
+
 type appConfig struct {
-	routes  map[string]route
-	secrets map[string]string
-	policy  policyConfig
+	routes     map[string]route
+	secrets    map[string]string
+	policy     policyConfig
+	kubernetes kubernetesConfig
+}
+
+type kubernetesConfig struct {
+	enabled        string // "auto", "true", "false"
+	apiServer      string
+	tokenPath      string
+	validateMethod string // "tokenreview", "jwks" (future)
 }
 
 func loadAppConfig(path string) (*appConfig, error) {
@@ -92,16 +111,51 @@ func parseConfig(data []byte) (*appConfig, error) {
 	policyCfg := policyConfig{
 		Enabled:      false,
 		DefaultAllow: true, // default to allow for backwards compatibility
+		Engine:       "config",
+		PolicyPath:   "",
+		DecisionPath: "veilwarden/authz/allow", // default OPA decision path
 	}
 	if raw.Policy != nil {
 		policyCfg.Enabled = raw.Policy.Enabled
 		policyCfg.DefaultAllow = raw.Policy.DefaultAllow
+		if raw.Policy.Engine != "" {
+			policyCfg.Engine = raw.Policy.Engine
+		}
+		if raw.Policy.PolicyPath != "" {
+			policyCfg.PolicyPath = raw.Policy.PolicyPath
+		}
+		if raw.Policy.DecisionPath != "" {
+			policyCfg.DecisionPath = raw.Policy.DecisionPath
+		}
+	}
+
+	// Parse kubernetes configuration (optional section)
+	k8sCfg := kubernetesConfig{
+		enabled:        "auto", // default to auto-detect
+		apiServer:      "https://kubernetes.default.svc",
+		tokenPath:      "/var/run/secrets/kubernetes.io/serviceaccount/token",
+		validateMethod: "tokenreview",
+	}
+	if raw.Kubernetes != nil {
+		if raw.Kubernetes.Enabled != "" {
+			k8sCfg.enabled = raw.Kubernetes.Enabled
+		}
+		if raw.Kubernetes.APIServer != "" {
+			k8sCfg.apiServer = raw.Kubernetes.APIServer
+		}
+		if raw.Kubernetes.TokenPath != "" {
+			k8sCfg.tokenPath = raw.Kubernetes.TokenPath
+		}
+		if raw.Kubernetes.ValidateMethod != "" {
+			k8sCfg.validateMethod = raw.Kubernetes.ValidateMethod
+		}
 	}
 
 	return &appConfig{
-		routes:  routeMap,
-		secrets: secretMap,
-		policy:  policyCfg,
+		routes:     routeMap,
+		secrets:    secretMap,
+		policy:     policyCfg,
+		kubernetes: k8sCfg,
 	}, nil
 }
 

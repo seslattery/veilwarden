@@ -108,7 +108,7 @@ func TestProxyPolicyAllowed(t *testing.T) {
 
 	server := newProxyServer(routes, "session", &configSecretStore{
 		secrets: map[string]string{"test-secret": "secret-value"},
-	}, nil, policyEngine, "user123", "user@example.com", "engineering")
+	}, nil, policyEngine, nil, "user123", "user@example.com", "engineering")
 
 	server.httpClient = &http.Client{
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
@@ -156,7 +156,7 @@ func TestProxyPolicyDenied(t *testing.T) {
 
 	server := newProxyServer(routes, "session", &configSecretStore{
 		secrets: map[string]string{"test-secret": "secret-value"},
-	}, nil, policyEngine, "user456", "blocked@example.com", "external")
+	}, nil, policyEngine, nil, "user456", "blocked@example.com", "external")
 
 	req := httptest.NewRequest(http.MethodDelete, "http://veilwarden/admin", nil)
 	req.Header.Set(sessionHeader, "session")
@@ -211,7 +211,7 @@ func TestPolicyInputContext(t *testing.T) {
 
 	server := newProxyServer(routes, "session", &configSecretStore{
 		secrets: map[string]string{"github-token": "ghp_test"},
-	}, nil, mockEngine, "alice", "alice@company.com", "engineering")
+	}, nil, mockEngine, nil, "alice", "alice@company.com", "engineering")
 
 	server.httpClient = &http.Client{
 		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {

@@ -14,19 +14,22 @@ import (
 )
 
 type runConfig struct {
-	listenAddr     string
-	configPath     string
-	sessionSecret  string
-	dopplerToken   string
-	dopplerBaseURL string
-	dopplerProject string
-	dopplerConfig  string
-	cacheTTL       time.Duration
-	dopplerTimeout time.Duration
-	otelEnabled    bool
-	userID         string
-	userEmail      string
-	userOrg        string
+	listenAddr        string
+	configPath        string
+	sessionSecret     string
+	dopplerToken      string
+	dopplerBaseURL    string
+	dopplerProject    string
+	dopplerConfig     string
+	cacheTTL          time.Duration
+	dopplerTimeout    time.Duration
+	otelEnabled       bool
+	userID            string
+	userEmail         string
+	userOrg           string
+	k8sEnabled        string // "auto", "true", "false"
+	k8sAPIServer      string
+	k8sValidateMethod string
 }
 
 func main() {
@@ -70,9 +73,12 @@ func main() {
 	}
 
 	// Initialize policy engine
-	policyEngine := newConfigPolicyEngine(appCfg.policy)
+	policyEngine := buildPolicyEngine(ctx, appCfg.policy)
 
-	server := newProxyServer(appCfg.routes, cfg.sessionSecret, store, logger, policyEngine, cfg.userID, cfg.userEmail, cfg.userOrg)
+	// Initialize Kubernetes authenticator
+	k8sAuth := buildK8sAuthenticator(ctx, cfg, appCfg, logger)
+
+	server := newProxyServer(appCfg.routes, cfg.sessionSecret, store, logger, policyEngine, k8sAuth, cfg.userID, cfg.userEmail, cfg.userOrg)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", healthHandler)
@@ -121,6 +127,9 @@ func parseRunConfig() runConfig {
 	flag.StringVar(&cfg.userID, "user-id", "", "user ID for policy context (optional)")
 	flag.StringVar(&cfg.userEmail, "user-email", "", "user email for policy context (optional)")
 	flag.StringVar(&cfg.userOrg, "user-org", "", "user organization for policy context (optional)")
+	flag.StringVar(&cfg.k8sEnabled, "k8s-enabled", "auto", "enable Kubernetes authentication (auto/true/false)")
+	flag.StringVar(&cfg.k8sAPIServer, "k8s-api-server", "https://kubernetes.default.svc", "Kubernetes API server URL")
+	flag.StringVar(&cfg.k8sValidateMethod, "k8s-validate-method", "tokenreview", "token validation method (tokenreview)")
 	flag.Parse()
 
 	if cfg.sessionSecret == "" {
@@ -193,6 +202,92 @@ func buildSecretStore(cfg runConfig, appCfg *appConfig) (secretStore, error) {
 			"Add these secrets to the 'secrets' section in your config file", strings.Join(missing, ", "))
 	}
 	return &configSecretStore{secrets: appCfg.secrets}, nil
+}
+
+func buildPolicyEngine(ctx context.Context, cfg policyConfig) PolicyEngine {
+	// If policy disabled, return allow-all config engine
+	if !cfg.Enabled {
+		return newConfigPolicyEngine(policyConfig{
+			Enabled:      false,
+			DefaultAllow: true,
+		})
+	}
+
+	// Select engine based on config
+	switch cfg.Engine {
+	case "opa":
+		engine, err := newOPAPolicyEngine(ctx, cfg)
+		if err != nil {
+			slog.Error("Failed to initialize OPA policy engine",
+				"error", err,
+				"hint", "Verify policy_path exists and contains valid .rego files")
+			os.Exit(1)
+		}
+		slog.Info("OPA policy engine initialized",
+			"policy_path", cfg.PolicyPath,
+			"decision_path", cfg.DecisionPath)
+		return engine
+	case "config", "":
+		return newConfigPolicyEngine(cfg)
+	default:
+		slog.Error("Unknown policy engine",
+			"engine", cfg.Engine,
+			"hint", "Valid engines: 'config', 'opa'")
+		os.Exit(1)
+		return nil
+	}
+}
+
+func buildK8sAuthenticator(ctx context.Context, runCfg runConfig, appCfg *appConfig, logger *slog.Logger) *k8sAuthenticator {
+	// Determine final enabled value: CLI flag overrides config file
+	k8sEnabledValue := appCfg.kubernetes.enabled
+	if runCfg.k8sEnabled != "auto" {
+		k8sEnabledValue = runCfg.k8sEnabled
+	}
+
+	// Determine if we should enable K8s authentication
+	shouldEnableK8s := false
+	if k8sEnabledValue == "true" {
+		shouldEnableK8s = true
+		logger.Info("Kubernetes authentication explicitly enabled")
+	} else if k8sEnabledValue == "false" {
+		shouldEnableK8s = false
+		logger.Info("Kubernetes authentication explicitly disabled")
+	} else if k8sEnabledValue == "auto" {
+		// Auto-detect: check if we're running in Kubernetes
+		tokenPath := appCfg.kubernetes.tokenPath
+		if _, err := os.Stat(tokenPath); err == nil {
+			shouldEnableK8s = true
+			logger.Info("Kubernetes authentication auto-detected",
+				"token_path", tokenPath,
+				"hint", "Service account token file found")
+		} else {
+			shouldEnableK8s = false
+			logger.Info("Kubernetes authentication not detected",
+				"token_path", tokenPath,
+				"hint", "Service account token file not found, K8s auth disabled")
+		}
+	}
+
+	// If disabled, return nil (no authenticator)
+	if !shouldEnableK8s {
+		return nil
+	}
+
+	// Create the authenticator
+	k8sAuth, err := newK8sAuthenticator(true)
+	if err != nil {
+		logger.Error("Failed to initialize Kubernetes authenticator",
+			"error", err,
+			"hint", "Verify Kubernetes API server is accessible and RBAC permissions are configured")
+		os.Exit(1)
+	}
+
+	logger.Info("Kubernetes authentication enabled",
+		"api_server", runCfg.k8sAPIServer,
+		"validate_method", runCfg.k8sValidateMethod)
+
+	return k8sAuth
 }
 
 func firstNonEmpty(values ...string) string {

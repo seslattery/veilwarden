@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: veilwarden-config
+  namespace: veilwarden
+data:
+  config.yaml: |
+    routes:
+      - upstream_host: api.github.com
+        upstream_scheme: https
+        secret_id: GITHUB_TOKEN
+        inject_header: Authorization
+        header_value_template: "token {{secret}}"
+
+    kubernetes:
+      enabled: auto
+      validate_method: tokenreview
+
+    policy:
+      enabled: true
+      engine: opa
+      policy_path: /etc/veilwarden/policies
+      decision_path: veilwarden/authz/allow
