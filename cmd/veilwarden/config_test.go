@@ -65,3 +65,37 @@ routes:
 		t.Fatalf("expected validation error")
 	}
 }
+
+func TestParseConfigWithOPAPolicy(t *testing.T) {
+	yaml := `
+routes:
+  - upstream_host: api.example.com
+    upstream_scheme: https
+    secret_id: TEST_SECRET
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+policy:
+  enabled: true
+  engine: opa
+  policy_path: policies/
+  decision_path: veilwarden/authz/allow
+`
+
+	cfg, err := parseConfig([]byte(yaml))
+	if err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	if !cfg.policy.Enabled {
+		t.Error("expected policy enabled")
+	}
+	if cfg.policy.Engine != "opa" {
+		t.Errorf("expected engine 'opa', got %s", cfg.policy.Engine)
+	}
+	if cfg.policy.PolicyPath != "policies/" {
+		t.Errorf("expected policy_path 'policies/', got %s", cfg.policy.PolicyPath)
+	}
+	if cfg.policy.DecisionPath != "veilwarden/authz/allow" {
+		t.Errorf("expected decision_path 'veilwarden/authz/allow', got %s", cfg.policy.DecisionPath)
+	}
+}

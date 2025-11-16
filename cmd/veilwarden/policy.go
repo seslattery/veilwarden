@@ -45,8 +45,11 @@ type PolicyDecision struct {
 
 // policyConfig contains policy engine configuration.
 type policyConfig struct {
-	Enabled      bool // feature flag to enable/disable policy enforcement
-	DefaultAllow bool // MVP: simple boolean decision
+	Enabled      bool   // feature flag to enable/disable policy enforcement
+	DefaultAllow bool   // MVP: simple boolean decision
+	Engine       string // "config" or "opa"
+	PolicyPath   string // path to .rego files (for opa engine)
+	DecisionPath string // OPA query path (default: veilwarden/authz/allow)
 }
 
 // configPolicyEngine is the MVP implementation that makes decisions based on

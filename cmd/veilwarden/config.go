@@ -16,8 +16,11 @@ type fileConfig struct {
 }
 
 type policyEntry struct {
-	Enabled      bool `yaml:"enabled"`
-	DefaultAllow bool `yaml:"default_allow"`
+	Enabled      bool   `yaml:"enabled"`
+	DefaultAllow bool   `yaml:"default_allow"`
+	Engine       string `yaml:"engine"`        // "config" or "opa"
+	PolicyPath   string `yaml:"policy_path"`   // path to .rego files (for opa engine)
+	DecisionPath string `yaml:"decision_path"` // OPA query path (default: veilwarden/authz/allow)
 }
 
 type routeEntry struct {
@@ -92,10 +95,22 @@ func parseConfig(data []byte) (*appConfig, error) {
 	policyCfg := policyConfig{
 		Enabled:      false,
 		DefaultAllow: true, // default to allow for backwards compatibility
+		Engine:       "config",
+		PolicyPath:   "",
+		DecisionPath: "veilwarden/authz/allow", // default OPA decision path
 	}
 	if raw.Policy != nil {
 		policyCfg.Enabled = raw.Policy.Enabled
 		policyCfg.DefaultAllow = raw.Policy.DefaultAllow
+		if raw.Policy.Engine != "" {
+			policyCfg.Engine = raw.Policy.Engine
+		}
+		if raw.Policy.PolicyPath != "" {
+			policyCfg.PolicyPath = raw.Policy.PolicyPath
+		}
+		if raw.Policy.DecisionPath != "" {
+			policyCfg.DecisionPath = raw.Policy.DecisionPath
+		}
 	}
 
 	return &appConfig{
