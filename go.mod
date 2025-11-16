@@ -2,7 +2,10 @@ module veilwarden
 
 go 1.25
 
-require gopkg.in/yaml.v3 v3.0.1
+require (
+	github.com/open-policy-agent/opa v0.71.1
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/go-logr/logr v1.4.3 // indirect
