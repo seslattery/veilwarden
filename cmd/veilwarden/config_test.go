@@ -99,3 +99,58 @@ policy:
 		t.Errorf("expected decision_path 'veilwarden/authz/allow', got %s", cfg.policy.DecisionPath)
 	}
 }
+
+func TestParseConfigInvalidEngine(t *testing.T) {
+	yaml := `
+routes:
+  - upstream_host: api.example.com
+    upstream_scheme: https
+    secret_id: TEST_SECRET
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+policy:
+  enabled: true
+  engine: invalid
+`
+
+	cfg, err := parseConfig([]byte(yaml))
+	if err != nil {
+		t.Fatalf("config parsing should succeed: %v", err)
+	}
+
+	// Config parsing succeeds, but buildPolicyEngine will fail
+	// This is tested in main_test.go
+	if cfg.policy.Engine != "invalid" {
+		t.Errorf("expected engine 'invalid', got %s", cfg.policy.Engine)
+	}
+}
+
+func TestParseConfigBackwardsCompatibility(t *testing.T) {
+	// Old config without engine field should default to "config"
+	yaml := `
+routes:
+  - upstream_host: api.example.com
+    upstream_scheme: https
+    secret_id: TEST_SECRET
+    inject_header: Authorization
+    header_value_template: "Bearer {{secret}}"
+policy:
+  enabled: true
+  default_allow: false
+`
+
+	cfg, err := parseConfig([]byte(yaml))
+	if err != nil {
+		t.Fatalf("failed to parse config: %v", err)
+	}
+
+	if cfg.policy.Engine != "config" {
+		t.Errorf("expected default engine 'config', got %s", cfg.policy.Engine)
+	}
+	if cfg.policy.Enabled != true {
+		t.Error("expected policy enabled")
+	}
+	if cfg.policy.DefaultAllow != false {
+		t.Error("expected default_allow false")
+	}
+}
