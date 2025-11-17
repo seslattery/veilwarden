@@ -63,7 +63,7 @@ func TestMissingConfigSecrets(t *testing.T) {
 }
 
 func TestBuildSecretStoreRequiresProjectConfig(t *testing.T) {
-	_, err := buildSecretStore(runConfig{
+	_, err := buildSecretStore(&runConfig{
 		dopplerToken: "token",
 	}, &appConfig{})
 	if err == nil {
@@ -72,7 +72,7 @@ func TestBuildSecretStoreRequiresProjectConfig(t *testing.T) {
 }
 
 func TestBuildSecretStoreMissingConfigValues(t *testing.T) {
-	_, err := buildSecretStore(runConfig{}, &appConfig{
+	_, err := buildSecretStore(&runConfig{}, &appConfig{
 		routes: map[string]route{
 			"api": {secretID: "missing"},
 		},

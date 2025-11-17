@@ -415,29 +415,75 @@ Your agent code remains identical - just point to `http://localhost:8088` and pa
 - **[Doppler Integration](examples/doppler-config.yaml)** - Configuration examples for Doppler backend
 - **[Local Development](scripts/)** - Helper scripts for local testing with Doppler and OPA
 
-## Testing
+## Development
 
-**Run unit tests:**
+**Prerequisites:**
+- Go 1.25+
+- [just](https://github.com/casey/just) command runner (optional but recommended)
+- Docker (for building images and E2E tests)
+- EnvTest binaries (optional, for integration tests with real K8s API server)
+
+**Quick Setup:**
 ```bash
-go test ./cmd/veilwarden
+# Install development dependencies
+just setup
+
+# Optional: Install EnvTest for integration tests
+just install-envtest
+
+# Or manually install:
+brew install just  # macOS
+# or: cargo install just  # via Rust
 ```
 
-**Run end-to-end tests:**
-```bash
-# Basic proxy functionality
-go test -v -run TestE2EBasicProxy ./cmd/veilwarden
+**Common Development Tasks:**
 
-# OPA policy enforcement
+```bash
+# Run tests
+just test              # Unit and basic E2E tests
+just test-unit         # Fast unit tests only
+just test-integration  # With EnvTest (real K8s API server)
+just test-e2e          # Kubernetes E2E tests (requires cluster)
+just test-all          # All tests
+just test-coverage     # Generate coverage report
+
+# Code quality
+just lint              # Run golangci-lint
+just vuln-check        # Check for vulnerabilities
+just fmt               # Format code
+just check             # Lint + vuln + test
+just check-all         # Lint + vuln + all tests
+
+# Build
+just build             # Build binary to bin/veilwarden
+just docker-build      # Build Docker image
+
+# Run locally
+just run               # Run with example config
+just run-doppler       # Run with Doppler integration
+
+# Maintenance
+just tidy              # Tidy dependencies
+just clean             # Clean build artifacts
+```
+
+**Manual Testing:**
+```bash
+# Run unit tests
+go test ./cmd/veilwarden
+
+# Run with build tags
+go test -tags=integration ./cmd/veilwarden  # EnvTest integration
+go test -tags=e2e ./cmd/veilwarden          # Kubernetes E2E
+
+# Run specific test
 go test -v -run TestE2EOPAIntegration ./cmd/veilwarden
 
-# Doppler integration (requires DOPPLER_TOKEN)
-export DOPPLER_TOKEN=dp.st.***
-export DOPPLER_PROJECT=veilwarden
-export DOPPLER_CONFIG=dev_personal
-go test -v -run TestE2EDopplerIntegration ./cmd/veilwarden
+# Full E2E with kind cluster
+./scripts/test_k8s_e2e.sh
 ```
 
-**Local demo scripts:**
+**Demo Scripts:**
 ```bash
 # Basic local echo server demo
 ./scripts/test_local.sh
@@ -452,25 +498,20 @@ export DOPPLER_TOKEN=dp.st.***
 
 ## Getting Started
 
-**Prerequisites:** Go 1.25+
-
 **Clone and run:**
 ```bash
 git clone https://github.com/yourusername/veilwarden
 cd veilwarden
 
-# Start local echo server (for testing)
-go run ./cmd/echo &
+# Setup development environment
+just setup
 
-# Run Veilwarden with example config
+# Run locally
+just run
+
+# Or manually:
 export VEILWARDEN_SESSION_SECRET=dev-secret
-go run ./cmd/veilwarden --config test-config.yaml
-
-# Test the proxy
-curl -X POST http://127.0.0.1:8088/test \
-  -H "X-Session-Secret: dev-secret" \
-  -H "X-Upstream-Host: 127.0.0.1:9090" \
-  -d 'hello=world'
+go run ./cmd/veilwarden --config examples/veilwarden-local-dev.yaml
 ```
 
 See example configurations in `examples/` and detailed deployment guides in `docs/`.

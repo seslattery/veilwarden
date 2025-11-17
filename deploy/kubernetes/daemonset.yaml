@@ -23,6 +23,7 @@ spec:
         args:
         - --config=/etc/veilwarden/config.yaml
         - --k8s-enabled=auto
+        - --listen=0.0.0.0:8088
         ports:
         - name: proxy
           containerPort: 8088

@@ -43,7 +43,7 @@ func main() {
 
 	// Initialize OpenTelemetry
 	ctx := context.Background()
-	otelShutdown, err := initTelemetry(ctx, telemetryConfig{
+	otelShutdown, err := initTelemetry(telemetryConfig{
 		enabled: cfg.otelEnabled,
 		logger:  logger,
 	})
@@ -63,10 +63,10 @@ func main() {
 			"config_path", cfg.configPath,
 			"error", err,
 			"hint", "Verify the file exists and contains valid YAML with a 'routes' section")
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // exitAfterDefer is acceptable in main
 	}
 
-	store, err := buildSecretStore(cfg, appCfg)
+	store, err := buildSecretStore(&cfg, appCfg)
 	if err != nil {
 		logger.Error("Failed to configure secret store", "error", err)
 		os.Exit(1)
@@ -76,7 +76,7 @@ func main() {
 	policyEngine := buildPolicyEngine(ctx, appCfg.policy)
 
 	// Initialize Kubernetes authenticator
-	k8sAuth := buildK8sAuthenticator(ctx, cfg, appCfg, logger)
+	k8sAuth := buildK8sAuthenticator(&cfg, appCfg, logger)
 
 	server := newProxyServer(appCfg.routes, cfg.sessionSecret, store, logger, policyEngine, k8sAuth, cfg.userID, cfg.userEmail, cfg.userOrg)
 
@@ -171,10 +171,11 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	//nolint:errcheck // Health check response write failure is non-recoverable
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
-func buildSecretStore(cfg runConfig, appCfg *appConfig) (secretStore, error) {
+func buildSecretStore(cfg *runConfig, appCfg *appConfig) (secretStore, error) {
 	if cfg.dopplerToken != "" {
 		if cfg.dopplerProject == "" || cfg.dopplerConfig == "" {
 			return nil, fmt.Errorf("Doppler project and config are required when using a Doppler token.\n" +
@@ -182,7 +183,7 @@ func buildSecretStore(cfg runConfig, appCfg *appConfig) (secretStore, error) {
 				"  --doppler-project and --doppler-config flags, OR\n" +
 				"  DOPPLER_PROJECT and DOPPLER_CONFIG environment variables")
 		}
-		return newDopplerSecretStore(dopplerOptions{
+		return newDopplerSecretStore(&dopplerOptions{
 			token:    cfg.dopplerToken,
 			baseURL:  cfg.dopplerBaseURL,
 			project:  cfg.dopplerProject,
@@ -238,7 +239,7 @@ func buildPolicyEngine(ctx context.Context, cfg policyConfig) PolicyEngine {
 	}
 }
 
-func buildK8sAuthenticator(ctx context.Context, runCfg runConfig, appCfg *appConfig, logger *slog.Logger) *k8sAuthenticator {
+func buildK8sAuthenticator(runCfg *runConfig, appCfg *appConfig, logger *slog.Logger) *k8sAuthenticator {
 	// Determine final enabled value: CLI flag overrides config file
 	k8sEnabledValue := appCfg.kubernetes.enabled
 	if runCfg.k8sEnabled != "auto" {
@@ -247,13 +248,14 @@ func buildK8sAuthenticator(ctx context.Context, runCfg runConfig, appCfg *appCon
 
 	// Determine if we should enable K8s authentication
 	shouldEnableK8s := false
-	if k8sEnabledValue == "true" {
+	switch k8sEnabledValue {
+	case "true":
 		shouldEnableK8s = true
 		logger.Info("Kubernetes authentication explicitly enabled")
-	} else if k8sEnabledValue == "false" {
+	case "false":
 		shouldEnableK8s = false
 		logger.Info("Kubernetes authentication explicitly disabled")
-	} else if k8sEnabledValue == "auto" {
+	case "auto":
 		// Auto-detect: check if we're running in Kubernetes
 		tokenPath := appCfg.kubernetes.tokenPath
 		if _, err := os.Stat(tokenPath); err == nil {

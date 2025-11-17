@@ -6,23 +6,31 @@ package main
 import (
 	"context"
 	"testing"
-	"time"
 
+	authv1 "k8s.io/api/authentication/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
 
+// ptr is a helper function to get a pointer to a value
+func ptr[T any](v T) *T {
+	return &v
+}
+
 func TestK8sAuthenticationIntegration(t *testing.T) {
 	// Start EnvTest (real API server)
+	// Requires: setup-envtest to be installed and binaries available
+	// Install with: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
 	testEnv := &envtest.Environment{
 		CRDDirectoryPaths: []string{},
 	}
 
 	cfg, err := testEnv.Start()
 	if err != nil {
-		t.Fatalf("failed to start test environment: %v", err)
+		t.Skipf("EnvTest binaries not available (install with 'just install-envtest'): %v", err)
+		return
 	}
 	defer testEnv.Stop()
 
@@ -55,25 +63,24 @@ func TestK8sAuthenticationIntegration(t *testing.T) {
 		t.Fatalf("failed to create service account: %v", err)
 	}
 
-	// Wait for token to be created
-	time.Sleep(2 * time.Second)
-
-	// Get ServiceAccount token
-	sa, err = clientset.CoreV1().ServiceAccounts("test-integration").Get(context.Background(), "test-sa", metav1.GetOptions{})
+	// Create a token for the service account using TokenRequest API (K8s 1.24+)
+	// This is the modern way to get service account tokens
+	tokenRequest := &authv1.TokenRequest{
+		Spec: authv1.TokenRequestSpec{
+			ExpirationSeconds: ptr(int64(3600)), // 1 hour
+		},
+	}
+	tokenResponse, err := clientset.CoreV1().ServiceAccounts("test-integration").CreateToken(
+		context.Background(),
+		"test-sa",
+		tokenRequest,
+		metav1.CreateOptions{},
+	)
 	if err != nil {
-		t.Fatalf("failed to get service account: %v", err)
+		t.Fatalf("failed to create token: %v", err)
 	}
 
-	if len(sa.Secrets) == 0 {
-		t.Fatal("service account has no secrets")
-	}
-
-	secret, err := clientset.CoreV1().Secrets("test-integration").Get(context.Background(), sa.Secrets[0].Name, metav1.GetOptions{})
-	if err != nil {
-		t.Fatalf("failed to get secret: %v", err)
-	}
-
-	token := string(secret.Data["token"])
+	token := tokenResponse.Status.Token
 	if token == "" {
 		t.Fatal("token is empty")
 	}
@@ -97,7 +104,8 @@ func TestK8sAuthenticationIntegrationInvalidToken(t *testing.T) {
 	testEnv := &envtest.Environment{}
 	cfg, err := testEnv.Start()
 	if err != nil {
-		t.Fatalf("failed to start test environment: %v", err)
+		t.Skipf("EnvTest binaries not available (install with 'just install-envtest'): %v", err)
+		return
 	}
 	defer testEnv.Stop()
 

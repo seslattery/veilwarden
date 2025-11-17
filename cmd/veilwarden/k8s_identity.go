@@ -8,10 +8,12 @@ type k8sIdentity struct {
 	username       string // Full username: system:serviceaccount:NS:SA
 }
 
+// Type returns the identity type.
 func (i *k8sIdentity) Type() string {
 	return "kubernetes"
 }
 
+// Attributes returns the identity attributes as a map.
 func (i *k8sIdentity) Attributes() map[string]string {
 	attrs := map[string]string{
 		"namespace":       i.namespace,
