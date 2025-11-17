@@ -39,7 +39,7 @@ func TestDopplerSecretStoreFetchAndCache(t *testing.T) {
 		}),
 	}
 
-	store := newDopplerSecretStore(dopplerOptions{
+	store := newDopplerSecretStore(&dopplerOptions{
 		token:    "token",
 		baseURL:  "https://doppler.test",
 		project:  "proj",
@@ -80,7 +80,7 @@ func TestDopplerSecretStoreHTTPError(t *testing.T) {
 		}),
 	}
 
-	store := newDopplerSecretStore(dopplerOptions{
+	store := newDopplerSecretStore(&dopplerOptions{
 		token:   "bad",
 		baseURL: "https://doppler.test",
 		project: "proj",
@@ -103,7 +103,7 @@ func TestDopplerSecretStoreAPIFailure(t *testing.T) {
 		}),
 	}
 
-	store := newDopplerSecretStore(dopplerOptions{
+	store := newDopplerSecretStore(&dopplerOptions{
 		token:   "t",
 		baseURL: "https://doppler.test",
 		project: "proj",

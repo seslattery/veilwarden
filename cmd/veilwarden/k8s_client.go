@@ -26,8 +26,13 @@ func newK8sClient() (*k8sClient, error) {
 		// Fallback to kubeconfig for local development
 		kubeconfig := os.Getenv("KUBECONFIG")
 		if kubeconfig == "" {
-			home, _ := os.UserHomeDir()
-			kubeconfig = filepath.Join(home, ".kube", "config")
+			home, err := os.UserHomeDir()
+			if err != nil {
+				// Fallback to empty if home dir unavailable
+				kubeconfig = ""
+			} else {
+				kubeconfig = filepath.Join(home, ".kube", "config")
+			}
 		}
 		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
 		if err != nil {

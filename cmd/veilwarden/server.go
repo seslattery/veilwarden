@@ -42,6 +42,7 @@ type configSecretStore struct {
 	secrets map[string]string
 }
 
+// Get retrieves a secret from the static configuration by ID.
 func (s *configSecretStore) Get(_ context.Context, id string) (string, error) {
 	val, ok := s.secrets[id]
 	if !ok {
@@ -88,21 +89,28 @@ func newProxyServer(routes map[string]route, sessionSecret string, store secretS
 	meter := otel.Meter(serviceName)
 
 	// Create metrics (ignore errors as they're optional)
+	//nolint:errcheck // meter creation errors are non-fatal
 	requestCounter, _ := meter.Int64Counter("veilwarden.requests.total",
 		metric.WithDescription("Total number of proxy requests"))
+	//nolint:errcheck // meter creation errors are non-fatal
 	requestDuration, _ := meter.Float64Histogram("veilwarden.request.duration",
 		metric.WithDescription("Duration of proxy requests in seconds"),
 		metric.WithUnit("s"))
+	//nolint:errcheck // meter creation errors are non-fatal
 	errorCounter, _ := meter.Int64Counter("veilwarden.errors.total",
 		metric.WithDescription("Total number of errors by error code"))
+	//nolint:errcheck // meter creation errors are non-fatal
 	upstreamDuration, _ := meter.Float64Histogram("veilwarden.upstream.duration",
 		metric.WithDescription("Duration of upstream requests in seconds"),
 		metric.WithUnit("s"))
+	//nolint:errcheck // meter creation errors are non-fatal
 	policyDecisions, _ := meter.Int64Counter("veilwarden.policy.decisions.total",
 		metric.WithDescription("Total number of policy decisions by result"))
+	//nolint:errcheck // meter creation errors are non-fatal
 	k8sTokenReviewDuration, _ := meter.Float64Histogram("veilwarden.k8s.tokenreview.duration",
 		metric.WithDescription("Duration of Kubernetes TokenReview API calls in seconds"),
 		metric.WithUnit("s"))
+	//nolint:errcheck // meter creation errors are non-fatal
 	k8sTokenReviewErrors, _ := meter.Int64Counter("veilwarden.k8s.tokenreview.errors.total",
 		metric.WithDescription("Total number of Kubernetes TokenReview failures by reason"))
 
@@ -165,8 +173,7 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Record request counter with identity attributes
 	requestAttrs := []attribute.KeyValue{}
-	switch id := ident.(type) {
-	case *k8sIdentity:
+	if id, ok := ident.(*k8sIdentity); ok {
 		requestAttrs = append(requestAttrs,
 			attribute.String("namespace", id.namespace),
 			attribute.String("service_account", id.serviceAccount),
@@ -202,7 +209,7 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		policyInput.PodName = id.podName
 	}
 
-	policyDecision, err := s.policyEngine.Decide(ctx, policyInput)
+	policyDecision, err := s.policyEngine.Decide(ctx, &policyInput)
 	if err != nil {
 		s.recordError(ctx, "POLICY_ERROR", reqID)
 		s.writeError(w, http.StatusInternalServerError, "POLICY_ERROR",
@@ -292,7 +299,7 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	span.SetAttributes(attribute.String("secret.id", route.secretID))
 
-	targetURL, err := buildUpstreamURL(route, r.URL)
+	targetURL, err := buildUpstreamURL(&route, r.URL)
 	if err != nil {
 		s.recordError(ctx, "INVALID_PATH", reqID)
 		s.writeError(w, http.StatusBadRequest, "INVALID_PATH", err.Error(), reqID)
@@ -412,13 +419,13 @@ func classifyTokenReviewError(err error) string {
 		return "invalid"
 	}
 	if strings.Contains(errStr, "connection") || strings.Contains(errStr, "network") ||
-	   strings.Contains(errStr, "timeout") || strings.Contains(errStr, "api call failed") {
+		strings.Contains(errStr, "timeout") || strings.Contains(errStr, "api call failed") {
 		return "network_error"
 	}
 	return "unknown"
 }
 
-func buildUpstreamURL(rt route, in *url.URL) (string, error) {
+func buildUpstreamURL(rt *route, in *url.URL) (string, error) { //nolint:unparam // error return for future extensibility
 	path := in.EscapedPath()
 	if path == "" {
 		path = "/"
@@ -481,7 +488,7 @@ func (s *proxyServer) writeError(w http.ResponseWriter, status int, code, messag
 func writeJSONError(w http.ResponseWriter, status int, code, message, requestID string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorResponse{
+	_ = json.NewEncoder(w).Encode(errorResponse{ //nolint:errcheck // best effort error response
 		Error:     code,
 		Message:   message,
 		RequestID: requestID,

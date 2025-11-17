@@ -55,20 +55,15 @@ fi
 
 kind create cluster --name "${CLUSTER_NAME}" --wait 5m
 
-# Set KUBECONFIG
-export KUBECONFIG="$(kind get kubeconfig-path --name "${CLUSTER_NAME}" 2>/dev/null || kind get kubeconfig --name "${CLUSTER_NAME}" | grep -v "^apiVersion:" | head -1)"
-if [ -z "$KUBECONFIG" ]; then
-    # For newer kind versions
-    kind export kubeconfig --name "${CLUSTER_NAME}"
-    export KUBECONFIG="${HOME}/.kube/config"
-fi
+# Set kubectl context explicitly
+kubectl config use-context "kind-${CLUSTER_NAME}"
 
 echo -e "${GREEN}✓ Kind cluster created${NC}"
 
 # Verify cluster is ready
 echo -e "\n${YELLOW}Verifying cluster is ready...${NC}"
-kubectl cluster-info
-kubectl get nodes
+kubectl cluster-info --context "kind-${CLUSTER_NAME}"
+kubectl get nodes --context "kind-${CLUSTER_NAME}"
 
 # Build veilwarden image
 echo -e "\n${YELLOW}Building veilwarden Docker image...${NC}"
@@ -113,33 +108,34 @@ EOF
 
 # Deploy veilwarden
 echo -e "\n${YELLOW}Deploying veilwarden to cluster...${NC}"
-kubectl apply -f deploy/kubernetes/namespace.yaml
-kubectl apply -f deploy/kubernetes/serviceaccount.yaml
-kubectl apply -f deploy/kubernetes/clusterrole.yaml
-kubectl apply -f deploy/kubernetes/clusterrolebinding.yaml
-kubectl apply -f deploy/kubernetes/configmap.yaml
-kubectl apply -f /tmp/veilwarden-secrets.yaml
-kubectl apply -f /tmp/veilwarden-policies.yaml
+KUBE_CONTEXT="kind-${CLUSTER_NAME}"
+kubectl apply -f deploy/kubernetes/namespace.yaml --context "${KUBE_CONTEXT}"
+kubectl apply -f deploy/kubernetes/serviceaccount.yaml --context "${KUBE_CONTEXT}"
+kubectl apply -f deploy/kubernetes/clusterrole.yaml --context "${KUBE_CONTEXT}"
+kubectl apply -f deploy/kubernetes/clusterrolebinding.yaml --context "${KUBE_CONTEXT}"
+kubectl apply -f deploy/kubernetes/configmap.yaml --context "${KUBE_CONTEXT}"
+kubectl apply -f /tmp/veilwarden-secrets.yaml --context "${KUBE_CONTEXT}"
+kubectl apply -f /tmp/veilwarden-policies.yaml --context "${KUBE_CONTEXT}"
 
 # Update daemonset image to use test image
-kubectl apply -f deploy/kubernetes/daemonset.yaml
-kubectl set image daemonset/veilwarden veilwarden="${IMAGE_NAME}" -n ${NAMESPACE}
+kubectl apply -f deploy/kubernetes/daemonset.yaml --context "${KUBE_CONTEXT}"
+kubectl set image daemonset/veilwarden veilwarden="${IMAGE_NAME}" -n ${NAMESPACE} --context "${KUBE_CONTEXT}"
 
 echo -e "${GREEN}✓ Manifests applied${NC}"
 
 # Wait for deployment to be ready
 echo -e "\n${YELLOW}Waiting for DaemonSet to be ready...${NC}"
-kubectl rollout status daemonset/veilwarden -n ${NAMESPACE} --timeout=5m
+kubectl rollout status daemonset/veilwarden -n ${NAMESPACE} --timeout=5m --context "${KUBE_CONTEXT}"
 
 echo -e "${GREEN}✓ DaemonSet is ready${NC}"
 
 # Show pod status
 echo -e "\n${YELLOW}Pod status:${NC}"
-kubectl get pods -n ${NAMESPACE}
+kubectl get pods -n ${NAMESPACE} --context "${KUBE_CONTEXT}"
 
 # Show veilwarden logs (last 20 lines)
 echo -e "\n${YELLOW}Veilwarden logs:${NC}"
-kubectl logs -n ${NAMESPACE} -l app=veilwarden --tail=20 || true
+kubectl logs -n ${NAMESPACE} -l app=veilwarden --tail=20 --context "${KUBE_CONTEXT}" || true
 
 # Run E2E tests
 echo -e "\n${YELLOW}Running E2E tests...${NC}"

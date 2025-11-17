@@ -59,6 +59,7 @@ type kubernetesConfig struct {
 }
 
 func loadAppConfig(path string) (*appConfig, error) {
+	// #nosec G304 -- Config path comes from operator-controlled CLI flag, not user input
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -85,7 +86,7 @@ func parseConfig(data []byte) (*appConfig, error) {
 
 	routeMap := make(map[string]route, len(raw.Routes))
 	for _, r := range raw.Routes {
-		if err := validateRoute(r); err != nil {
+		if err := validateRoute(&r); err != nil {
 			return nil, err
 		}
 		key := strings.ToLower(r.UpstreamHost)
@@ -159,7 +160,7 @@ func parseConfig(data []byte) (*appConfig, error) {
 	}, nil
 }
 
-func validateRoute(r routeEntry) error {
+func validateRoute(r *routeEntry) error {
 	if r.UpstreamHost == "" {
 		return errors.New("config: route upstream_host is required")
 	}

@@ -31,7 +31,7 @@ default allow := true`
 	}
 	defer engine.Close()
 
-	decision, err := engine.Decide(context.Background(), PolicyInput{
+	decision, err := engine.Decide(context.Background(), &PolicyInput{
 		Method:       "DELETE",
 		Path:         "/admin",
 		UpstreamHost: "api.stripe.com",
@@ -72,7 +72,7 @@ allow if {
 	defer engine.Close()
 
 	// Test denied request
-	decision, err := engine.Decide(context.Background(), PolicyInput{
+	decision, err := engine.Decide(context.Background(), &PolicyInput{
 		Method: "DELETE",
 		Path:   "/admin",
 	})
@@ -84,7 +84,7 @@ allow if {
 	}
 
 	// Test allowed request
-	decision, err = engine.Decide(context.Background(), PolicyInput{
+	decision, err = engine.Decide(context.Background(), &PolicyInput{
 		Method: "GET",
 		Path:   "/users",
 	})
@@ -173,7 +173,7 @@ allow if {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decision, err := engine.Decide(context.Background(), tt.input)
+			decision, err := engine.Decide(context.Background(), &tt.input)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -306,7 +306,7 @@ allow if {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			decision, err := engine.Decide(context.Background(), tt.input)
+			decision, err := engine.Decide(context.Background(), &tt.input)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}

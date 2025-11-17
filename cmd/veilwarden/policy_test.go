@@ -23,7 +23,7 @@ func TestConfigPolicyEngineDisabled(t *testing.T) {
 		AgentID:      "test-agent",
 	}
 
-	decision, err := engine.Decide(context.Background(), input)
+	decision, err := engine.Decide(context.Background(), &input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestConfigPolicyEngineAllowByDefault(t *testing.T) {
 		AgentID:      "cli-tool",
 	}
 
-	decision, err := engine.Decide(context.Background(), input)
+	decision, err := engine.Decide(context.Background(), &input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestConfigPolicyEngineDenyByDefault(t *testing.T) {
 		AgentID:      "unknown-agent",
 	}
 
-	decision, err := engine.Decide(context.Background(), input)
+	decision, err := engine.Decide(context.Background(), &input)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,10 +189,10 @@ func TestProxyPolicyDenied(t *testing.T) {
 
 func TestPolicyInputContext(t *testing.T) {
 	// This test verifies that the policy engine receives the correct context
-	var capturedInput PolicyInput
+	var capturedInput *PolicyInput
 
 	mockEngine := &mockPolicyEngine{
-		decideFunc: func(ctx context.Context, input PolicyInput) (PolicyDecision, error) {
+		decideFunc: func(ctx context.Context, input *PolicyInput) (PolicyDecision, error) {
 			capturedInput = input
 			return PolicyDecision{Allowed: true, Reason: "mock allow"}, nil
 		},
@@ -317,10 +317,10 @@ routes:
 // Helper types and functions
 
 type mockPolicyEngine struct {
-	decideFunc func(context.Context, PolicyInput) (PolicyDecision, error)
+	decideFunc func(context.Context, *PolicyInput) (PolicyDecision, error)
 }
 
-func (m *mockPolicyEngine) Decide(ctx context.Context, input PolicyInput) (PolicyDecision, error) {
+func (m *mockPolicyEngine) Decide(ctx context.Context, input *PolicyInput) (PolicyDecision, error) {
 	return m.decideFunc(ctx, input)
 }
 

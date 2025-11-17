@@ -25,7 +25,7 @@ type telemetryConfig struct {
 type telemetryShutdown func(context.Context) error
 
 // initTelemetry initializes OpenTelemetry tracing and metrics
-func initTelemetry(ctx context.Context, cfg telemetryConfig) (telemetryShutdown, error) {
+func initTelemetry(cfg telemetryConfig) (telemetryShutdown, error) {
 	if !cfg.enabled {
 		// Return no-op shutdown function
 		return func(context.Context) error { return nil }, nil
@@ -55,7 +55,7 @@ func initTelemetry(ctx context.Context, cfg telemetryConfig) (telemetryShutdown,
 	otel.SetTracerProvider(tracerProvider)
 
 	// Initialize metrics
-	meterProvider, err := initMeter(ctx, res)
+	meterProvider, err := initMeter(res)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize meter: %w", err)
 	}
@@ -95,7 +95,7 @@ func initTracer(res *resource.Resource) (*trace.TracerProvider, error) {
 	return traceProvider, nil
 }
 
-func initMeter(ctx context.Context, res *resource.Resource) (*metric.MeterProvider, error) {
+func initMeter(res *resource.Resource) (*metric.MeterProvider, error) {
 	// Use stdout exporter for development/debugging
 	exporter, err := stdoutmetric.New(
 		stdoutmetric.WithPrettyPrint(),

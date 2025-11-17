@@ -1,10 +1,13 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.23-alpine AS builder
 
 WORKDIR /app
 
 # Copy go mod files
 COPY go.mod go.sum ./
+
+# Enable Go toolchain auto-download
+ENV GOTOOLCHAIN=auto
 RUN go mod download
 
 # Copy source code

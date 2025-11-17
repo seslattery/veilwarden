@@ -60,7 +60,7 @@ routes:
 
 	// Send request through proxy
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/test", proxyAddr), strings.NewReader("hello=world"))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, fmt.Sprintf("http://%s/test", proxyAddr), strings.NewReader("hello=world"))
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
@@ -150,7 +150,7 @@ routes:
 
 	// Send request through proxy
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/test", proxyAddr), nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("http://%s/test", proxyAddr), nil)
 	if err != nil {
 		t.Fatalf("failed to create request: %v", err)
 	}
@@ -268,7 +268,7 @@ policy:
 
 	// Test 1: Allowed GET request from engineering user
 	t.Run("AllowedGET", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/test", proxyAddr), nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("http://%s/test", proxyAddr), nil)
 		req.Header.Set("X-Session-Secret", "test-session")
 		req.Header.Set("X-Upstream-Host", echoAddr)
 
@@ -286,7 +286,7 @@ policy:
 
 	// Test 2: Denied POST from non ci-agent
 	t.Run("DeniedPOST", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/test", proxyAddr), nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, fmt.Sprintf("http://%s/test", proxyAddr), nil)
 		req.Header.Set("X-Session-Secret", "test-session")
 		req.Header.Set("X-Upstream-Host", echoAddr)
 		req.Header.Set("X-Agent-Id", "unknown-agent")
@@ -313,7 +313,7 @@ policy:
 
 	// Test 3: Allowed POST from ci-agent
 	t.Run("AllowedPOSTFromCIAgent", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s/test", proxyAddr), nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, fmt.Sprintf("http://%s/test", proxyAddr), nil)
 		req.Header.Set("X-Session-Secret", "test-session")
 		req.Header.Set("X-Upstream-Host", echoAddr)
 		req.Header.Set("X-Agent-Id", "ci-agent")
@@ -426,7 +426,7 @@ policy:
 
 	// Test: Allowed request gets secret from Doppler
 	t.Run("AllowedWithDoppler", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/test", proxyAddr), nil)
+		req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("http://%s/test", proxyAddr), nil)
 		req.Header.Set("X-Session-Secret", "test-session")
 		req.Header.Set("X-Upstream-Host", echoAddr)
 
@@ -524,7 +524,7 @@ func startProxyServer(t *testing.T, cfg proxyServerConfig) *http.Server {
 	// Build secret store
 	var store secretStore
 	if cfg.dopplerToken != "" {
-		store = newDopplerSecretStore(dopplerOptions{
+		store = newDopplerSecretStore(&dopplerOptions{
 			token:    cfg.dopplerToken,
 			baseURL:  "https://api.doppler.com",
 			project:  cfg.dopplerProject,
@@ -573,13 +573,18 @@ func findFreePort(t *testing.T) string {
 	return listener.Addr().String()
 }
 
+//nolint:unparam // timeout parameter allows flexibility for different test scenarios
 func waitForServer(t *testing.T, url string, timeout time.Duration) {
 	t.Helper()
 	client := &http.Client{Timeout: 1 * time.Second}
 	deadline := time.Now().Add(timeout)
 
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		resp, err := client.Do(req)
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode < 500 {

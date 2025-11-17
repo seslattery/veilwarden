@@ -10,9 +10,9 @@ import (
 
 // identity represents an authenticated entity (user or workload).
 type identity interface {
-	Type() string                         // "static", "kubernetes"
-	Attributes() map[string]string        // All identity attributes
-	PolicyInput() map[string]interface{}  // OPA policy input fields
+	Type() string                        // "static", "kubernetes"
+	Attributes() map[string]string       // All identity attributes
+	PolicyInput() map[string]interface{} // OPA policy input fields
 }
 
 // staticIdentity represents static user identity from config.
@@ -22,10 +22,12 @@ type staticIdentity struct {
 	userOrg   string
 }
 
+// Type returns the identity type.
 func (i *staticIdentity) Type() string {
 	return "static"
 }
 
+// Attributes returns the identity attributes as a map.
 func (i *staticIdentity) Attributes() map[string]string {
 	return map[string]string{
 		"user_id":    i.userID,
@@ -34,6 +36,7 @@ func (i *staticIdentity) Attributes() map[string]string {
 	}
 }
 
+// PolicyInput returns the input map for policy evaluation.
 func (i *staticIdentity) PolicyInput() map[string]interface{} {
 	return map[string]interface{}{
 		"user_id":    i.userID,
@@ -48,7 +51,7 @@ func (i *staticIdentity) PolicyInput() map[string]interface{} {
 type PolicyEngine interface {
 	// Decide evaluates whether a request should be allowed based on the provided input.
 	// Returns a PolicyDecision with the result and reasoning.
-	Decide(ctx context.Context, input PolicyInput) (PolicyDecision, error)
+	Decide(ctx context.Context, input *PolicyInput) (PolicyDecision, error)
 }
 
 // PolicyInput contains all context needed for policy evaluation.
@@ -111,7 +114,7 @@ func newConfigPolicyEngine(cfg policyConfig) *configPolicyEngine {
 // Decide implements PolicyEngine for config-based policy.
 // In this MVP implementation, it simply returns allow/deny based on the
 // configured default value.
-func (p *configPolicyEngine) Decide(ctx context.Context, input PolicyInput) (PolicyDecision, error) {
+func (p *configPolicyEngine) Decide(ctx context.Context, input *PolicyInput) (PolicyDecision, error) {
 	// If policy is not enabled, allow all requests
 	if !p.config.Enabled {
 		return PolicyDecision{

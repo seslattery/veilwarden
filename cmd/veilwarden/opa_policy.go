@@ -85,6 +85,7 @@ func loadRegoFiles(dir string) (map[string]string, error) {
 		}
 
 		path := filepath.Join(dir, entry.Name())
+		// #nosec G304 -- Policy directory comes from config, only .rego files are read
 		content, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", path, err)
@@ -97,7 +98,7 @@ func loadRegoFiles(dir string) (map[string]string, error) {
 }
 
 // Decide implements PolicyEngine using OPA policy evaluation.
-func (p *opaPolicyEngine) Decide(ctx context.Context, input PolicyInput) (PolicyDecision, error) {
+func (p *opaPolicyEngine) Decide(ctx context.Context, input *PolicyInput) (PolicyDecision, error) {
 	// Convert PolicyInput to map for OPA
 	inputMap := map[string]interface{}{
 		"method":        input.Method,

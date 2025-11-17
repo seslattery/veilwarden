@@ -42,7 +42,7 @@ type cachedSecret struct {
 	expires time.Time
 }
 
-func newDopplerSecretStore(opts dopplerOptions) *dopplerSecretStore {
+func newDopplerSecretStore(opts *dopplerOptions) *dopplerSecretStore {
 	if opts.timeout <= 0 {
 		opts.timeout = 5 * time.Second
 	}
@@ -60,12 +60,13 @@ func newDopplerSecretStore(opts dopplerOptions) *dopplerSecretStore {
 	opts.baseURL = strings.TrimRight(opts.baseURL, "/")
 	return &dopplerSecretStore{
 		client: opts.client,
-		opts:   opts,
+		opts:   *opts,
 		tracer: otel.Tracer(serviceName),
 		cache:  make(map[string]cachedSecret),
 	}
 }
 
+// Get retrieves a secret from Doppler by ID, using caching when available.
 func (d *dopplerSecretStore) Get(ctx context.Context, id string) (string, error) {
 	ctx, span := d.tracer.Start(ctx, "doppler.get_secret",
 		trace.WithAttributes(
@@ -134,7 +135,7 @@ func (d *dopplerSecretStore) fetchSecret(ctx context.Context, id string) (string
 		url.QueryEscape(id),
 	)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, http.NoBody)
 	if err != nil {
 		span.SetStatus(codes.Error, "failed to build request")
 		return "", fmt.Errorf("doppler request build: %w", err)
@@ -199,9 +200,9 @@ func (r dopplerSecretResponse) message() string {
 }
 
 func summarizeBody(body []byte) string {
-	const max = 256
-	if len(body) <= max {
+	const maxLen = 256
+	if len(body) <= maxLen {
 		return string(body)
 	}
-	return string(body[:max]) + "..."
+	return string(body[:maxLen]) + "..."
 }
