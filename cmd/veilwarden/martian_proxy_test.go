@@ -149,3 +149,77 @@ func TestSecretInjectorModifier_NoRouteConfigured(t *testing.T) {
 	assert.NoError(t, err, "should pass through without error")
 	assert.Empty(t, req.Header.Get("Authorization"), "should not inject header")
 }
+
+func TestMartianProxyServer_E2E_SecretInjectionAndPolicy(t *testing.T) {
+	// Setup: Create ephemeral CA
+	sessionID := "e2e-test-session"
+
+	// Mock upstream HTTP server (not HTTPS) that verifies secret was injected
+	var receivedAuth string
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer mockUpstream.Close()
+
+	// Extract host from mock upstream URL
+	upstreamURL, _ := url.Parse(mockUpstream.URL)
+	upstreamHost := upstreamURL.Host
+	if h, _, err := net.SplitHostPort(upstreamHost); err == nil {
+		upstreamHost = h
+	}
+
+	// Configure proxy with routes and secrets
+	routes := map[string]route{
+		upstreamHost: {
+			upstreamHost:        upstreamHost,
+			secretID:            "TEST_SECRET",
+			headerName:          "Authorization",
+			headerValueTemplate: "Bearer {{secret}}",
+		},
+	}
+
+	secretStore := &configSecretStore{
+		secrets: map[string]string{
+			"TEST_SECRET": "sk-e2e-test-secret",
+		},
+	}
+
+	policyEngine := newConfigPolicyEngine(policyConfig{
+		Enabled:      true,
+		DefaultAllow: true,
+	})
+
+	// Create and start proxy
+	cfg := &MartianProxyConfig{
+		SessionID:    sessionID,
+		RequireAuth:  false,
+		Routes:       routes,
+		SecretStore:  secretStore,
+		PolicyEngine: policyEngine,
+	}
+
+	proxy, err := NewMartianProxyServer(cfg)
+	require.NoError(t, err)
+
+	proxyListener, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer proxyListener.Close()
+
+	go proxy.Serve(proxyListener)
+
+	// Make request through proxy (plain HTTP)
+	proxyURL, _ := url.Parse("http://" + proxyListener.Addr().String())
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+
+	resp, err := client.Get(mockUpstream.URL + "/test")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "Bearer sk-e2e-test-secret", receivedAuth, "secret should be injected")
+}
