@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -72,6 +73,53 @@ func (m *policyModifier) ModifyRequest(req *http.Request) error {
 	m.logger.Debug("policy allowed request",
 		"host", host,
 		"path", req.URL.Path)
+
+	return nil
+}
+
+// secretInjectorModifier injects API credentials from secret store.
+type secretInjectorModifier struct {
+	routes      map[string]route
+	secretStore secretStore
+	logger      *slog.Logger
+}
+
+// ModifyRequest injects the appropriate secret into the request headers.
+func (m *secretInjectorModifier) ModifyRequest(req *http.Request) error {
+	ctx := req.Context()
+
+	// Extract host (strip port if present)
+	host := req.URL.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+
+	// Lookup route for this host
+	route, ok := m.routes[host]
+	if !ok {
+		// No route configured - pass through without modification
+		m.logger.Debug("no route configured for host", "host", host)
+		return nil
+	}
+
+	// Fetch secret from store
+	secret, err := m.secretStore.Get(ctx, route.secretID)
+	if err != nil {
+		m.logger.Error("failed to fetch secret",
+			"secret_id", route.secretID,
+			"host", host,
+			"error", err)
+		return fmt.Errorf("failed to fetch secret %s: %w", route.secretID, err)
+	}
+
+	// Inject secret into header
+	headerValue := strings.ReplaceAll(route.headerValueTemplate, "{{secret}}", secret)
+	req.Header.Set(route.headerName, headerValue)
+
+	m.logger.Info("injected secret",
+		"host", host,
+		"header", route.headerName,
+		"secret_id", route.secretID)
 
 	return nil
 }

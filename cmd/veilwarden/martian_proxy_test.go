@@ -102,3 +102,50 @@ func TestPolicyModifier_DeniedRequest(t *testing.T) {
 	assert.Error(t, err, "deny-all policy should deny request")
 	assert.Contains(t, err.Error(), "forbidden by policy")
 }
+
+func TestSecretInjectorModifier_InjectsSecret(t *testing.T) {
+	// Create mock secret store
+	secretStore := &configSecretStore{
+		secrets: map[string]string{
+			"OPENAI_API_KEY": "sk-test-secret-12345",
+		},
+	}
+
+	// Create routes
+	routes := map[string]route{
+		"api.openai.com": {
+			upstreamHost:        "api.openai.com",
+			secretID:            "OPENAI_API_KEY",
+			headerName:          "Authorization",
+			headerValueTemplate: "Bearer {{secret}}",
+		},
+	}
+
+	modifier := &secretInjectorModifier{
+		routes:      routes,
+		secretStore: secretStore,
+		logger:      slog.Default(),
+	}
+
+	req := httptest.NewRequest("POST", "https://api.openai.com/v1/chat/completions", nil)
+
+	err := modifier.ModifyRequest(req)
+	assert.NoError(t, err)
+
+	// Verify secret was injected
+	assert.Equal(t, "Bearer sk-test-secret-12345", req.Header.Get("Authorization"))
+}
+
+func TestSecretInjectorModifier_NoRouteConfigured(t *testing.T) {
+	modifier := &secretInjectorModifier{
+		routes:      map[string]route{},
+		secretStore: &configSecretStore{secrets: map[string]string{}},
+		logger:      slog.Default(),
+	}
+
+	req := httptest.NewRequest("GET", "https://unknown.example.com/test", nil)
+
+	err := modifier.ModifyRequest(req)
+	assert.NoError(t, err, "should pass through without error")
+	assert.Empty(t, req.Header.Get("Authorization"), "should not inject header")
+}
