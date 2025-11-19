@@ -130,8 +130,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 	secretStore := proxy.NewMemorySecretStore(secrets)
 
-	// For MVP: Use allow-all policy (TODO: OPA integration)
-	policyEngine := proxy.NewAllowAllPolicyEngine()
+	// Build policy engine from config (defaults to allow-all if not configured)
+	policyEngine, err := buildPolicyEngine(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to initialize policy engine: %w", err)
+	}
 
 	// Find available port
 	proxyPort := execPort

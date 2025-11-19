@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -131,5 +132,50 @@ func TestBuildPolicyEngine_RespectsConfig(t *testing.T) {
 				t.Fatal("expected non-AllowAll engine, got AllowAllPolicyEngine")
 			}
 		})
+	}
+}
+
+func TestVeilExec_UsesPolicyFromConfig(t *testing.T) {
+	// This test verifies that when a config with policy is loaded,
+	// the policy engine is actually used (not hardcoded allow-all)
+
+	// Note: This is a light integration test. Full policy enforcement
+	// is tested in internal/proxy tests. Here we just verify wiring.
+
+	// Create temp config with deny-by-default policy
+	tmpDir := t.TempDir()
+	configPath := tmpDir + "/config.yaml"
+	configContent := `
+routes:
+  - host: api.test.com
+    secret_id: TEST_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+
+policy:
+  engine: opa
+  policy_path: /tmp/test.rego
+  decision_path: veilwarden/authz/allow
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	// Load config
+	cfg, err := loadVeilConfig(configPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	// Build policy engine - should fail because policy file doesn't exist
+	// But that's expected - we're just verifying it tries to use OPA
+	_, err = buildPolicyEngine(cfg)
+	if err == nil {
+		t.Fatal("expected error when OPA policy file doesn't exist")
+	}
+
+	// Verify error is about the policy file, not about using wrong engine
+	if !strings.Contains(err.Error(), "policy_path") && !strings.Contains(err.Error(), "rego") {
+		t.Fatalf("expected error about policy file, got: %v", err)
 	}
 }
