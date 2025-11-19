@@ -53,6 +53,16 @@ func init() {
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
+	// Check for unimplemented features
+	if execSandbox {
+		return fmt.Errorf(
+			"sandbox mode is not yet implemented\n\n" +
+			"The --sandbox flag is currently non-functional and provides no isolation.\n" +
+			"Track implementation progress at: https://github.com/yourusername/veilwarden/issues/TBD\n\n" +
+			"To run without sandboxing, remove the --sandbox flag.",
+		)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
