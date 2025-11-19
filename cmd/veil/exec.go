@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"veilwarden/cmd/veil/mitm"
 )
 
 var execCmd = &cobra.Command{
@@ -54,13 +58,32 @@ func runExec(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// TODO: Generate session ID
-	// TODO: Generate ephemeral CA
+	// Generate session ID
+	sessionID, err := generateSessionID()
+	if err != nil {
+		return fmt.Errorf("failed to generate session ID: %w", err)
+	}
+
+	if execVerbose {
+		fmt.Fprintf(os.Stderr, "Session ID: %s\n", sessionID)
+	}
+
+	// Generate ephemeral CA
+	ca, err := mitm.GenerateEphemeralCA(sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to generate CA: %w", err)
+	}
+	defer ca.Cleanup()
+
+	if execVerbose {
+		fmt.Fprintf(os.Stderr, "CA cert: %s\n", ca.CertPath)
+	}
+
 	// TODO: Start proxy
 	// TODO: Build environment variables
 	// TODO: Execute command
 
-	// For now, just execute the command directly
+	// For now, just execute the command
 	commandPath := args[0]
 	commandArgs := args[1:]
 
@@ -71,4 +94,12 @@ func runExec(cmd *cobra.Command, args []string) error {
 	childCmd.Env = os.Environ()
 
 	return childCmd.Run()
+}
+
+func generateSessionID() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
 }
