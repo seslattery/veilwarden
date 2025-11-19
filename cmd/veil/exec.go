@@ -79,11 +79,31 @@ func runExec(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "CA cert: %s\n", ca.CertPath)
 	}
 
-	// TODO: Start proxy
-	// TODO: Build environment variables
-	// TODO: Execute command
+	// Load configuration
+	cfg, err := loadVeilConfig(execConfigPath)
+	if err != nil {
+		if execVerbose {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Continuing without proxy...\n")
+		}
+		// Continue without proxy if config fails
+		cfg = &veilConfig{}
+	}
 
-	// For now, just execute the command
+	if execVerbose {
+		fmt.Fprintf(os.Stderr, "Config loaded: %d routes\n", len(cfg.Routes))
+	}
+
+	// For MVP: Just execute the command with session info
+	// Full proxy integration will be completed in follow-up tasks
+	// TODO: Start Martian proxy server
+	// TODO: Configure policy engine and secret store
+	// TODO: Build proxy environment variables
+
+	if execVerbose {
+		fmt.Fprintf(os.Stderr, "Executing command (proxy integration pending)...\n")
+	}
+
 	commandPath := args[0]
 	commandArgs := args[1:]
 
