@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"veilwarden/internal/policy/opa"
 )
 
 func TestOPAPolicyEngineAllowAll(t *testing.T) {
@@ -20,16 +22,10 @@ default allow := true`
 		t.Fatalf("failed to write policy: %v", err)
 	}
 
-	engine, err := newOPAPolicyEngine(context.Background(), policyConfig{
-		Enabled:      true,
-		Engine:       "opa",
-		PolicyPath:   tmpDir,
-		DecisionPath: "veilwarden/authz/allow",
-	})
+	engine, err := opa.New(context.Background(), tmpDir, "veilwarden/authz/allow")
 	if err != nil {
 		t.Fatalf("failed to create OPA engine: %v", err)
 	}
-	defer engine.Close()
 
 	decision, err := engine.Decide(context.Background(), &PolicyInput{
 		Method:       "DELETE",
@@ -60,16 +56,10 @@ allow if {
 		t.Fatalf("failed to write policy: %v", err)
 	}
 
-	engine, err := newOPAPolicyEngine(context.Background(), policyConfig{
-		Enabled:      true,
-		Engine:       "opa",
-		PolicyPath:   tmpDir,
-		DecisionPath: "veilwarden/authz/allow",
-	})
+	engine, err := opa.New(context.Background(), tmpDir, "veilwarden/authz/allow")
 	if err != nil {
 		t.Fatalf("failed to create OPA engine: %v", err)
 	}
-	defer engine.Close()
 
 	// Test denied request
 	decision, err := engine.Decide(context.Background(), &PolicyInput{
@@ -119,16 +109,10 @@ allow if {
 		t.Fatalf("failed to write policy: %v", err)
 	}
 
-	engine, err := newOPAPolicyEngine(context.Background(), policyConfig{
-		Enabled:      true,
-		Engine:       "opa",
-		PolicyPath:   tmpDir,
-		DecisionPath: "veilwarden/authz/allow",
-	})
+	engine, err := opa.New(context.Background(), tmpDir, "veilwarden/authz/allow")
 	if err != nil {
 		t.Fatalf("failed to create OPA engine: %v", err)
 	}
-	defer engine.Close()
 
 	tests := []struct {
 		name    string
@@ -217,16 +201,10 @@ allow if {
 		t.Fatalf("failed to write policy: %v", err)
 	}
 
-	engine, err := newOPAPolicyEngine(context.Background(), policyConfig{
-		Enabled:      true,
-		Engine:       "opa",
-		PolicyPath:   tmpDir,
-		DecisionPath: "veilwarden/authz/allow",
-	})
+	engine, err := opa.New(context.Background(), tmpDir, "veilwarden/authz/allow")
 	if err != nil {
 		t.Fatalf("failed to create OPA engine: %v", err)
 	}
-	defer engine.Close()
 
 	tests := []struct {
 		name    string
