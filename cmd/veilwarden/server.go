@@ -328,11 +328,12 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	copyHeaders(upstreamReq.Header, r.Header)
-	upstreamReq.Header.Set(route.headerName, strings.ReplaceAll(route.headerValueTemplate, "{{secret}}", secretValue))
 	// Remove authentication headers meant for VeilWarden to prevent leaking them to upstream
-	upstreamReq.Header.Del("Authorization") // K8s token or session secret
+	upstreamReq.Header.Del("Authorization") // K8s token from client
 	upstreamReq.Header.Del(sessionHeader)
 	upstreamReq.Header.Del(upstreamHeader)
+	// Now inject the secret (after removing inbound auth headers)
+	upstreamReq.Header.Set(route.headerName, strings.ReplaceAll(route.headerValueTemplate, "{{secret}}", secretValue))
 	upstreamReq.Host = route.upstreamHost
 
 	// Trace upstream request
