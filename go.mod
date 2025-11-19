@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/google/martian/v3 v3.3.3
 	github.com/open-policy-agent/opa v0.65.0
+	github.com/spf13/cobra v1.8.0
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.38.0
 	go.opentelemetry.io/otel/exporters/stdout/stdoutmetric v1.38.0
@@ -44,6 +45,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
 	github.com/imdario/mergo v0.3.6 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
