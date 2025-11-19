@@ -186,6 +186,14 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	hostHeader := strings.TrimSpace(r.Header.Get(upstreamHeader))
 
+	// Early route lookup to populate SecretID for policy evaluation
+	var secretID string
+	if hostHeader != "" {
+		if route, ok := s.routes[strings.ToLower(hostHeader)]; ok {
+			secretID = route.secretID
+		}
+	}
+
 	// Convert to PolicyInput struct for engine (backwards compatibility)
 	policyInput := PolicyInput{
 		Method:       r.Method,
@@ -193,6 +201,7 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		Query:        r.URL.RawQuery,
 		UpstreamHost: hostHeader,
 		AgentID:      agentID,
+		SecretID:     secretID,
 		RequestID:    reqID,
 		Timestamp:    time.Now(),
 	}
@@ -320,6 +329,8 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 	copyHeaders(upstreamReq.Header, r.Header)
 	upstreamReq.Header.Set(route.headerName, strings.ReplaceAll(route.headerValueTemplate, "{{secret}}", secretValue))
+	// Remove authentication headers meant for VeilWarden to prevent leaking them to upstream
+	upstreamReq.Header.Del("Authorization") // K8s token or session secret
 	upstreamReq.Header.Del(sessionHeader)
 	upstreamReq.Header.Del(upstreamHeader)
 	upstreamReq.Host = route.upstreamHost
