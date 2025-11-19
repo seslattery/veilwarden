@@ -221,6 +221,12 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 	for _, e := range parentEnv {
 		key := strings.SplitN(e, "=", 2)[0]
 		lower := strings.ToLower(key)
+
+		// Strip DOPPLER_TOKEN (master credential that can access all secrets)
+		if key == "DOPPLER_TOKEN" {
+			continue
+		}
+
 		if strings.HasPrefix(lower, "http_proxy") ||
 			strings.HasPrefix(lower, "https_proxy") ||
 			strings.Contains(lower, "_ca_") {
