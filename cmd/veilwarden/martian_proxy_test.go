@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -61,4 +62,43 @@ func TestMartianProxyServer_BasicMITM(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.True(t, requestReceived, "request should reach upstream server")
+}
+
+func TestPolicyModifier_AllowedRequest(t *testing.T) {
+	// Create allow-all policy engine
+	policyEngine := newConfigPolicyEngine(policyConfig{
+		Enabled:      true,
+		DefaultAllow: true,
+	})
+
+	modifier := &policyModifier{
+		policyEngine: policyEngine,
+		sessionID:    "test-session",
+		logger:       slog.Default(),
+	}
+
+	req := httptest.NewRequest("GET", "https://api.openai.com/v1/models", nil)
+
+	err := modifier.ModifyRequest(req)
+	assert.NoError(t, err, "allow-all policy should allow request")
+}
+
+func TestPolicyModifier_DeniedRequest(t *testing.T) {
+	// Create deny-all policy engine
+	policyEngine := newConfigPolicyEngine(policyConfig{
+		Enabled:      true,
+		DefaultAllow: false,
+	})
+
+	modifier := &policyModifier{
+		policyEngine: policyEngine,
+		sessionID:    "test-session",
+		logger:       slog.Default(),
+	}
+
+	req := httptest.NewRequest("GET", "https://api.openai.com/v1/models", nil)
+
+	err := modifier.ModifyRequest(req)
+	assert.Error(t, err, "deny-all policy should deny request")
+	assert.Contains(t, err.Error(), "forbidden by policy")
 }

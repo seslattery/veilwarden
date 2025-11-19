@@ -112,6 +112,7 @@ func (p *opaPolicyEngine) Decide(ctx context.Context, input *PolicyInput) (Polic
 		"secret_id":     input.SecretID,
 		"request_id":    input.RequestID,
 		"timestamp":     input.Timestamp.Format(time.RFC3339),
+		"body":          input.Body,
 	}
 
 	// Add Kubernetes identity fields if present
@@ -123,6 +124,10 @@ func (p *opaPolicyEngine) Decide(ctx context.Context, input *PolicyInput) (Polic
 	}
 	if input.PodName != "" {
 		inputMap["pod_name"] = input.PodName
+	}
+	// Add Session ID if present (laptop mode)
+	if input.SessionID != "" {
+		inputMap["session_id"] = input.SessionID
 	}
 
 	// Evaluate the prepared query
