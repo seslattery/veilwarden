@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"veilwarden/cmd/veil/mitm"
+	"veilwarden/internal/policy/opa"
 	"veilwarden/internal/proxy"
 )
 
@@ -257,6 +258,29 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 	)
 
 	return env
+}
+
+func buildPolicyEngine(cfg *veilConfig) (proxy.PolicyEngine, error) {
+	// If no policy configured, default to allow-all (backward compatibility)
+	if cfg.Policy == nil || cfg.Policy.Engine == "" || cfg.Policy.Engine == "disabled" {
+		return proxy.NewAllowAllPolicyEngine(), nil
+	}
+
+	// If OPA policy
+	if cfg.Policy.Engine == "opa" {
+		if cfg.Policy.PolicyPath == "" {
+			return nil, fmt.Errorf("policy.policy_path required when policy.engine is 'opa'")
+		}
+
+		decisionPath := cfg.Policy.DecisionPath
+		if decisionPath == "" {
+			decisionPath = "veilwarden/authz/allow"
+		}
+
+		return opa.New(context.Background(), cfg.Policy.PolicyPath, decisionPath)
+	}
+
+	return nil, fmt.Errorf("unknown policy engine type: %s (valid options: disabled, opa)", cfg.Policy.Engine)
 }
 
 func generateSessionID() (string, error) {

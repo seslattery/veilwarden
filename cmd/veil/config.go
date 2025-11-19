@@ -22,10 +22,11 @@ type veilRouteEntry struct {
 }
 
 type veilPolicyEntry struct {
-	Enabled      bool   `yaml:"enabled"`
-	Engine       string `yaml:"engine"`
-	PolicyPath   string `yaml:"policy_path"`
-	DecisionPath string `yaml:"decision_path"`
+	Enabled         bool   `yaml:"enabled"`
+	Engine          string `yaml:"engine"`
+	PolicyPath      string `yaml:"policy_path"`
+	DecisionPath    string `yaml:"decision_path"`
+	DefaultDecision string `yaml:"default_decision"` // "allow" or "deny"
 }
 
 func loadVeilConfig(path string) (*veilConfig, error) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"veilwarden/internal/proxy"
 )
 
 func TestSandboxFlag_ReturnsError(t *testing.T) {
@@ -70,5 +71,65 @@ func TestBuildProxyEnv_StripsDopplerToken(t *testing.T) {
 	}
 	if !hasHTTPProxy {
 		t.Fatal("HTTP_PROXY should be added to child environment")
+	}
+}
+
+func TestBuildPolicyEngine_RespectsConfig(t *testing.T) {
+	tests := []struct {
+		name         string
+		config       *veilConfig
+		wantAllowAll bool
+		wantErr      bool
+	}{
+		{
+			name:         "disabled returns allow-all",
+			config:       &veilConfig{Policy: &veilPolicyEntry{Engine: "disabled"}},
+			wantAllowAll: true,
+		},
+		{
+			name:         "empty returns allow-all for backward compatibility",
+			config:       &veilConfig{},
+			wantAllowAll: true,
+		},
+		{
+			name:    "unknown engine returns error",
+			config:  &veilConfig{Policy: &veilPolicyEntry{Engine: "invalid"}},
+			wantErr: true,
+		},
+		{
+			name:    "opa engine without policy path returns error",
+			config:  &veilConfig{Policy: &veilPolicyEntry{Engine: "opa"}},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, err := buildPolicyEngine(tt.config)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error for invalid engine")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if engine == nil {
+				t.Fatal("expected policy engine, got nil")
+			}
+
+			// Type check for allow-all
+			_, isAllowAll := engine.(*proxy.AllowAllPolicyEngine)
+			if tt.wantAllowAll && !isAllowAll {
+				t.Fatalf("expected AllowAllPolicyEngine, got %T", engine)
+			}
+			if !tt.wantAllowAll && isAllowAll {
+				t.Fatal("expected non-AllowAll engine, got AllowAllPolicyEngine")
+			}
+		})
 	}
 }
