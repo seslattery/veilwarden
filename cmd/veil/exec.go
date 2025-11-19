@@ -5,13 +5,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"log/slog"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"veilwarden/cmd/veil/mitm"
+	"veilwarden/internal/proxy"
 )
 
 var execCmd = &cobra.Command{
@@ -94,16 +100,88 @@ func runExec(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Config loaded: %d routes\n", len(cfg.Routes))
 	}
 
-	// For MVP: Just execute the command with session info
-	// Full proxy integration will be completed in follow-up tasks
-	// TODO: Start Martian proxy server
-	// TODO: Configure policy engine and secret store
-	// TODO: Build proxy environment variables
-
-	if execVerbose {
-		fmt.Fprintf(os.Stderr, "Executing command (proxy integration pending)...\n")
+	// Convert routes to proxy.Route format
+	routes := make(map[string]proxy.Route)
+	for _, r := range cfg.Routes {
+		routes[r.Host] = proxy.Route{
+			UpstreamHost:        r.Host,
+			SecretID:            r.SecretID,
+			HeaderName:          r.HeaderName,
+			HeaderValueTemplate: r.HeaderValueTemplate,
+		}
 	}
 
+	// For MVP: Use in-memory secret store (TODO: Doppler integration)
+	secrets := map[string]string{
+		"OPENAI_API_KEY":    os.Getenv("OPENAI_API_KEY"),
+		"ANTHROPIC_API_KEY": os.Getenv("ANTHROPIC_API_KEY"),
+		"GITHUB_TOKEN":      os.Getenv("GITHUB_TOKEN"),
+	}
+	secretStore := proxy.NewMemorySecretStore(secrets)
+
+	// For MVP: Use allow-all policy (TODO: OPA integration)
+	policyEngine := proxy.NewAllowAllPolicyEngine()
+
+	// Find available port
+	proxyPort := execPort
+	if proxyPort == 0 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("failed to find available port: %w", err)
+		}
+		proxyPort = listener.Addr().(*net.TCPAddr).Port
+		listener.Close()
+	}
+
+	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+	proxyURL := fmt.Sprintf("http://%s", proxyAddr)
+
+	if execVerbose {
+		fmt.Fprintf(os.Stderr, "Proxy URL: %s\n", proxyURL)
+	}
+
+	// Create proxy server
+	var logger *slog.Logger
+	if execVerbose {
+		logger = slog.Default()
+	} else {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
+	proxyCfg := &proxy.MartianConfig{
+		SessionID:    sessionID,
+		CACert:       ca.CACert,
+		CAKey:        ca.CAKey,
+		Routes:       routes,
+		SecretStore:  secretStore,
+		PolicyEngine: policyEngine,
+		Logger:       logger,
+	}
+
+	proxyServer, err := proxy.NewMartianProxy(proxyCfg)
+	if err != nil {
+		return fmt.Errorf("failed to create proxy: %w", err)
+	}
+
+	// Start proxy in goroutine
+	proxyListener, err := net.Listen("tcp", proxyAddr)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", proxyAddr, err)
+	}
+	defer proxyListener.Close()
+
+	proxyErrChan := make(chan error, 1)
+	go func() {
+		proxyErrChan <- proxyServer.Serve(proxyListener)
+	}()
+
+	// Give proxy time to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Build environment variables with proxy URL and CA cert
+	childEnv := buildProxyEnv(os.Environ(), proxyURL, ca.CertPath)
+
+	// Execute command
 	commandPath := args[0]
 	commandArgs := args[1:]
 
@@ -111,9 +189,58 @@ func runExec(cmd *cobra.Command, args []string) error {
 	childCmd.Stdin = os.Stdin
 	childCmd.Stdout = os.Stdout
 	childCmd.Stderr = os.Stderr
-	childCmd.Env = os.Environ()
+	childCmd.Env = childEnv
 
-	return childCmd.Run()
+	if err := childCmd.Run(); err != nil {
+		// Check if proxy errored
+		select {
+		case proxyErr := <-proxyErrChan:
+			return fmt.Errorf("proxy error: %w (command may have also failed: %v)", proxyErr, err)
+		default:
+			return fmt.Errorf("command failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
+	env := make([]string, 0, len(parentEnv)+15)
+
+	// Copy parent env, filtering out existing proxy vars
+	for _, e := range parentEnv {
+		key := strings.SplitN(e, "=", 2)[0]
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "http_proxy") ||
+			strings.HasPrefix(lower, "https_proxy") ||
+			strings.Contains(lower, "_ca_") {
+			continue // Skip existing proxy env vars
+		}
+		env = append(env, e)
+	}
+
+	// Add proxy configuration
+	env = append(env,
+		// Standard proxy env vars (both cases for compatibility)
+		"HTTP_PROXY="+proxyURL,
+		"HTTPS_PROXY="+proxyURL,
+		"http_proxy="+proxyURL,
+		"https_proxy="+proxyURL,
+
+		// CA certificate paths for various tools
+		"REQUESTS_CA_BUNDLE="+caCertPath,   // Python requests
+		"SSL_CERT_FILE="+caCertPath,        // Go, curl
+		"NODE_EXTRA_CA_CERTS="+caCertPath,  // Node.js
+		"CURL_CA_BUNDLE="+caCertPath,       // curl (alternate)
+		"PIP_CERT="+caCertPath,             // pip
+		"HTTPLIB2_CA_CERTS="+caCertPath,    // Python httplib2
+		"AWS_CA_BUNDLE="+caCertPath,        // AWS CLI
+
+		// VeilWarden-specific
+		"VEILWARDEN_PROXY_URL="+proxyURL,
+	)
+
+	return env
 }
 
 func generateSessionID() (string, error) {
