@@ -41,6 +41,27 @@ response = requests.post("https://api.openai.com/v1/chat/completions", ...)
 # OPA policies enforce per-agent, per-path, per-model access control
 ```
 
+## Quick Start (Laptop Mode)
+
+```bash
+# Install
+go install github.com/yourusername/veilwarden/cmd/veil@latest
+
+# Initialize config
+veil init
+
+# Set API keys in environment (or use Doppler)
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Run your AI agent through the proxy
+veil exec -- python my_agent.py
+
+# Your agent code stays clean - no API keys!
+```
+
+The `veil exec` command starts a local MITM proxy, injects environment variables (HTTP_PROXY, CA certs), and runs your command. All HTTPS requests are intercepted and API keys are injected transparently.
+
 ### Core Benefits
 
 **1. Zero-Trust Security for Agents & Services**
