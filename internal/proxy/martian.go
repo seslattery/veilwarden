@@ -17,6 +17,29 @@ import (
 	"github.com/google/martian/v3/mitm"
 )
 
+const (
+	// MaxPolicyBodySize is the maximum request body size (in bytes) that will be read
+	// for policy evaluation. This prevents DoS attacks via large request bodies.
+	// Default: 1MB - sufficient for most API requests
+	MaxPolicyBodySize = 1 * 1024 * 1024 // 1 MB
+)
+
+// isValidHeaderValue validates that a string is safe to use as an HTTP header value.
+// It checks for control characters (especially newlines) that could enable header injection.
+// Per RFC 7230, header field values must be visible ASCII characters or spaces/tabs.
+func isValidHeaderValue(value string) bool {
+	for _, r := range value {
+		// Allow: visible ASCII (0x21-0x7E), space (0x20), tab (0x09)
+		// Reject: control characters including CR (0x0D), LF (0x0A)
+		if r < 0x20 || r > 0x7E {
+			if r != 0x09 { // Allow tab
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // MartianConfig holds configuration for the Martian MITM proxy.
 type MartianConfig struct {
 	SessionID    string
@@ -122,13 +145,24 @@ func (m *policyModifier) ModifyRequest(req *http.Request) error {
 	ctx := req.Context()
 
 	// Read and buffer request body for policy evaluation
+	// Use LimitReader to prevent DoS attacks via large request bodies
 	var bodyBytes []byte
 	if req.Body != nil {
+		limitedReader := io.LimitReader(req.Body, MaxPolicyBodySize)
 		var err error
-		bodyBytes, err = io.ReadAll(req.Body)
+		bodyBytes, err = io.ReadAll(limitedReader)
 		if err != nil {
 			return fmt.Errorf("failed to read request body: %w", err)
 		}
+
+		// Check if we hit the limit - if so, warn and truncate
+		if len(bodyBytes) == MaxPolicyBodySize {
+			m.logger.Warn("request body truncated for policy evaluation",
+				"limit_bytes", MaxPolicyBodySize,
+				"host", req.URL.Host,
+				"path", req.URL.Path)
+		}
+
 		// Restore body for downstream handlers
 		req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	}
@@ -211,8 +245,26 @@ func (m *secretInjectorModifier) ModifyRequest(req *http.Request) error {
 		return fmt.Errorf("failed to fetch secret %s: %w", route.SecretID, err)
 	}
 
+	// Validate secret value to prevent header injection attacks
+	if !isValidHeaderValue(secret) {
+		m.logger.Error("secret contains invalid characters for HTTP header",
+			"secret_id", route.SecretID,
+			"host", host)
+		return fmt.Errorf("secret %s contains invalid characters for HTTP header", route.SecretID)
+	}
+
 	// Inject secret into header
 	headerValue := strings.ReplaceAll(route.HeaderValueTemplate, "{{secret}}", secret)
+
+	// Validate final header value as well (in case template contains invalid chars)
+	if !isValidHeaderValue(headerValue) {
+		m.logger.Error("header value contains invalid characters",
+			"secret_id", route.SecretID,
+			"header", route.HeaderName,
+			"host", host)
+		return fmt.Errorf("header value for %s contains invalid characters", route.HeaderName)
+	}
+
 	req.Header.Set(route.HeaderName, headerValue)
 
 	m.logger.Info("injected secret",

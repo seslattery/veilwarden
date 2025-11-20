@@ -332,8 +332,31 @@ func (s *proxyServer) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Del("Authorization") // K8s token from client
 	upstreamReq.Header.Del(sessionHeader)
 	upstreamReq.Header.Del(upstreamHeader)
-	// Now inject the secret (after removing inbound auth headers)
-	upstreamReq.Header.Set(route.headerName, strings.ReplaceAll(route.headerValueTemplate, "{{secret}}", secretValue))
+
+	// Validate secret value to prevent header injection attacks
+	if !isValidHeaderValue(secretValue) {
+		msg := fmt.Sprintf("Secret %s contains invalid characters for HTTP header", route.secretID)
+		s.recordError(ctx, "INVALID_SECRET", reqID)
+		s.writeError(w, http.StatusInternalServerError, "INVALID_SECRET", msg, reqID)
+		span.SetStatus(codes.Error, "invalid secret value")
+		s.recordDuration(ctx, startTime)
+		return
+	}
+
+	// Inject secret into header
+	headerValue := strings.ReplaceAll(route.headerValueTemplate, "{{secret}}", secretValue)
+
+	// Validate final header value as well (in case template contains invalid chars)
+	if !isValidHeaderValue(headerValue) {
+		msg := fmt.Sprintf("Header value for %s contains invalid characters", route.headerName)
+		s.recordError(ctx, "INVALID_HEADER_VALUE", reqID)
+		s.writeError(w, http.StatusInternalServerError, "INVALID_HEADER_VALUE", msg, reqID)
+		span.SetStatus(codes.Error, "invalid header value")
+		s.recordDuration(ctx, startTime)
+		return
+	}
+
+	upstreamReq.Header.Set(route.headerName, headerValue)
 	upstreamReq.Host = route.upstreamHost
 
 	// Trace upstream request
