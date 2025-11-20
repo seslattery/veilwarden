@@ -13,6 +13,14 @@ routes:
     inject_header: Authorization
     header_value_template: "Bearer {{secret}}"
 
+# Optional: Fetch secrets from Doppler instead of environment variables
+# Requires DOPPLER_TOKEN environment variable to be set
+# If not configured, secrets come from environment variables
+# doppler:
+#   project: my-project
+#   config: dev           # e.g., dev, staging, prod
+#   cache_ttl: 5m        # Optional, default 5m
+
 # OPA Policy Configuration
 policy:
   enabled: true
