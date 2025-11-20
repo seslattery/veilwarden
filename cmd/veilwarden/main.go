@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"veilwarden/internal/policy/opa"
+	"veilwarden/internal/doppler"
 )
 
 type runConfig struct {
@@ -185,13 +186,13 @@ func buildSecretStore(cfg *runConfig, appCfg *appConfig) (secretStore, error) {
 				"  --doppler-project and --doppler-config flags, OR\n" +
 				"  DOPPLER_PROJECT and DOPPLER_CONFIG environment variables")
 		}
-		return newDopplerSecretStore(&dopplerOptions{
-			token:    cfg.dopplerToken,
-			baseURL:  cfg.dopplerBaseURL,
-			project:  cfg.dopplerProject,
-			config:   cfg.dopplerConfig,
-			cacheTTL: cfg.cacheTTL,
-			timeout:  cfg.dopplerTimeout,
+		return doppler.NewStore(&doppler.Options{
+			Token:    cfg.dopplerToken,
+			BaseURL:  cfg.dopplerBaseURL,
+			Project:  cfg.dopplerProject,
+			Config:   cfg.dopplerConfig,
+			CacheTTL: cfg.cacheTTL,
+			Timeout:  cfg.dopplerTimeout,
 		}), nil
 	}
 	if len(appCfg.secrets) == 0 {
