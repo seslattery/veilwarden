@@ -73,8 +73,14 @@ type PolicyInput struct {
 	ServiceAccount string // Kubernetes service account
 	PodName        string // Kubernetes pod name (optional)
 
+	// Session context (for laptop mode)
+	SessionID string
+
 	// Resource context
 	SecretID string // which secret would be used (empty if route not resolved yet)
+
+	// Request body for policy inspection (NEW)
+	Body string
 
 	// Metadata
 	RequestID string
