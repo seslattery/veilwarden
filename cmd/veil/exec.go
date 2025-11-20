@@ -122,17 +122,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// For MVP: Use in-memory secret store (TODO: Doppler integration)
-	// Load secrets from environment based on route configurations
-	secrets := make(map[string]string)
-	for _, route := range cfg.Routes {
-		if route.SecretID != "" {
-			if val := os.Getenv(route.SecretID); val != "" {
-				secrets[route.SecretID] = val
-			}
-		}
+	// Build secret store (Doppler or in-memory)
+	secretStore, err := buildSecretStore(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to build secret store: %w", err)
 	}
-	secretStore := proxy.NewMemorySecretStore(secrets)
 
 	// Build policy engine from config (defaults to allow-all if not configured)
 	policyEngine, err := buildPolicyEngine(cfg)
