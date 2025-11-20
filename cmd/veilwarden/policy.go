@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"net/http"
 	"time"
+
+	"veilwarden/internal/proxy"
 )
 
 // identity represents an authenticated entity (user or workload).
@@ -45,54 +47,14 @@ func (i *staticIdentity) PolicyInput() map[string]interface{} {
 	}
 }
 
-// PolicyEngine defines the interface for making authorization decisions.
-// This abstraction allows for simple config-based policies (MVP) and future
-// OPA-backed policy evaluation without changing handler logic.
-type PolicyEngine interface {
-	// Decide evaluates whether a request should be allowed based on the provided input.
-	// Returns a PolicyDecision with the result and reasoning.
-	Decide(ctx context.Context, input *PolicyInput) (PolicyDecision, error)
-}
+// PolicyEngine is an alias for the shared policy engine interface.
+type PolicyEngine = proxy.PolicyEngine
 
-// PolicyInput contains all context needed for policy evaluation.
-type PolicyInput struct {
-	// Request context
-	Method       string
-	Path         string
-	Query        string
-	UpstreamHost string
+// PolicyInput is an alias for the shared policy input type.
+type PolicyInput = proxy.PolicyInput
 
-	// Identity context
-	AgentID   string // from X-Agent-Id header (optional)
-	UserID    string // from CLI flags (Doppler context)
-	UserEmail string // from CLI flags (Doppler context)
-	UserOrg   string // from CLI flags (Doppler context)
-
-	// Kubernetes identity context (for k8s workloads)
-	Namespace      string // Kubernetes namespace
-	ServiceAccount string // Kubernetes service account
-	PodName        string // Kubernetes pod name (optional)
-
-	// Session context (for laptop mode)
-	SessionID string
-
-	// Resource context
-	SecretID string // which secret would be used (empty if route not resolved yet)
-
-	// Request body for policy inspection (NEW)
-	Body string
-
-	// Metadata
-	RequestID string
-	Timestamp time.Time
-}
-
-// PolicyDecision represents the result of a policy evaluation.
-type PolicyDecision struct {
-	Allowed  bool              // whether the request is allowed
-	Reason   string            // human-readable explanation (for logging/debugging)
-	Metadata map[string]string // additional context for audit/telemetry
-}
+// PolicyDecision is an alias for the shared policy decision type.
+type PolicyDecision = proxy.PolicyDecision
 
 // policyConfig contains policy engine configuration.
 type policyConfig struct {

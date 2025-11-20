@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"veilwarden/internal/policy/opa"
 )
 
 type runConfig struct {
@@ -217,7 +219,7 @@ func buildPolicyEngine(ctx context.Context, cfg policyConfig) PolicyEngine {
 	// Select engine based on config
 	switch cfg.Engine {
 	case "opa":
-		engine, err := newOPAPolicyEngine(ctx, cfg)
+		engine, err := opa.New(ctx, cfg.PolicyPath, cfg.DecisionPath)
 		if err != nil {
 			slog.Error("Failed to initialize OPA policy engine",
 				"error", err,

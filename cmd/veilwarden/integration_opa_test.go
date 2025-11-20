@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"veilwarden/internal/policy/opa"
 )
 
 func TestOPAIntegrationAllowed(t *testing.T) {
@@ -34,16 +36,10 @@ allow if {
 	}
 
 	// Create OPA policy engine
-	engine, err := newOPAPolicyEngine(context.Background(), policyConfig{
-		Enabled:      true,
-		Engine:       "opa",
-		PolicyPath:   tmpDir,
-		DecisionPath: "veilwarden/authz/allow",
-	})
+	engine, err := opa.New(context.Background(), tmpDir, "veilwarden/authz/allow")
 	if err != nil {
 		t.Fatalf("failed to create OPA engine: %v", err)
 	}
-	defer engine.Close()
 
 	// Create proxy server with OPA engine
 	host := "api.test"
@@ -106,16 +102,10 @@ allow if {
 		t.Fatalf("failed to write policy: %v", err)
 	}
 
-	engine, err := newOPAPolicyEngine(context.Background(), policyConfig{
-		Enabled:      true,
-		Engine:       "opa",
-		PolicyPath:   tmpDir,
-		DecisionPath: "veilwarden/authz/allow",
-	})
+	engine, err := opa.New(context.Background(), tmpDir, "veilwarden/authz/allow")
 	if err != nil {
 		t.Fatalf("failed to create OPA engine: %v", err)
 	}
-	defer engine.Close()
 
 	host := "api.test"
 	routes := map[string]route{

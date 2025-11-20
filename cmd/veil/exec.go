@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"veilwarden/cmd/veil/mitm"
+	"veilwarden/internal/policy/opa"
 	"veilwarden/internal/proxy"
 )
 
@@ -53,6 +54,16 @@ func init() {
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
+	// Check for unimplemented features
+	if execSandbox {
+		return fmt.Errorf(
+			"sandbox mode is not yet implemented\n\n" +
+			"The --sandbox flag is currently non-functional and provides no isolation.\n" +
+			"Track implementation progress at: https://github.com/yourusername/veilwarden/issues/TBD\n\n" +
+			"To run without sandboxing, remove the --sandbox flag.",
+		)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -119,8 +130,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 	secretStore := proxy.NewMemorySecretStore(secrets)
 
-	// For MVP: Use allow-all policy (TODO: OPA integration)
-	policyEngine := proxy.NewAllowAllPolicyEngine()
+	// Build policy engine from config (defaults to allow-all if not configured)
+	policyEngine, err := buildPolicyEngine(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to initialize policy engine: %w", err)
+	}
 
 	// Find available port
 	proxyPort := execPort
@@ -211,6 +225,12 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 	for _, e := range parentEnv {
 		key := strings.SplitN(e, "=", 2)[0]
 		lower := strings.ToLower(key)
+
+		// Strip DOPPLER_TOKEN (master credential that can access all secrets)
+		if key == "DOPPLER_TOKEN" {
+			continue
+		}
+
 		if strings.HasPrefix(lower, "http_proxy") ||
 			strings.HasPrefix(lower, "https_proxy") ||
 			strings.Contains(lower, "_ca_") {
@@ -241,6 +261,29 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 	)
 
 	return env
+}
+
+func buildPolicyEngine(cfg *veilConfig) (proxy.PolicyEngine, error) {
+	// If no policy configured, default to allow-all (backward compatibility)
+	if cfg.Policy == nil || cfg.Policy.Engine == "" || cfg.Policy.Engine == "disabled" {
+		return proxy.NewAllowAllPolicyEngine(), nil
+	}
+
+	// If OPA policy
+	if cfg.Policy.Engine == "opa" {
+		if cfg.Policy.PolicyPath == "" {
+			return nil, fmt.Errorf("policy.policy_path required when policy.engine is 'opa'")
+		}
+
+		decisionPath := cfg.Policy.DecisionPath
+		if decisionPath == "" {
+			decisionPath = "veilwarden/authz/allow"
+		}
+
+		return opa.New(context.Background(), cfg.Policy.PolicyPath, decisionPath)
+	}
+
+	return nil, fmt.Errorf("unknown policy engine type: %s (valid options: disabled, opa)", cfg.Policy.Engine)
 }
 
 func generateSessionID() (string, error) {

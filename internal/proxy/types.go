@@ -31,11 +31,22 @@ type PolicyInput struct {
 	Query        string
 	UpstreamHost string
 
+	// Identity context
+	AgentID   string // from X-Agent-Id header (optional)
+	UserID    string // from CLI flags (Doppler context)
+	UserEmail string // from CLI flags (Doppler context)
+	UserOrg   string // from CLI flags (Doppler context)
+
+	// Kubernetes identity context (for k8s workloads)
+	Namespace      string // Kubernetes namespace
+	ServiceAccount string // Kubernetes service account
+	PodName        string // Kubernetes pod name (optional)
+
 	// Session context (for laptop mode)
 	SessionID string
 
 	// Resource context
-	SecretID string
+	SecretID string // which secret would be used (empty if route not resolved yet)
 
 	// Request body for policy inspection
 	Body string

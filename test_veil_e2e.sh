@@ -11,6 +11,10 @@ go build -o veil ./cmd/veil
 echo "Creating test config..."
 ./veil init --config-dir /tmp/veil-e2e-test
 
+# Disable policy engine for E2E testing (we're testing proxy functionality, not policies)
+sed -i.bak 's|engine: opa|engine: disabled|g' /tmp/veil-e2e-test/config.yaml
+rm /tmp/veil-e2e-test/config.yaml.bak
+
 # Test 1: Verify env vars are set
 echo ""
 echo "Test 1: Environment variable injection"
@@ -41,6 +45,28 @@ if [ "$OUTPUT" -ge 1 ]; then
     echo "✓ Proxy server started successfully"
 else
     echo "✗ FAILED: Proxy server did not start"
+    exit 1
+fi
+
+# Test 4: Verify DOPPLER_TOKEN is stripped
+echo ""
+echo "Test 4: DOPPLER_TOKEN stripping"
+OUTPUT=$(DOPPLER_TOKEN=dp.st.test.secret ./veil exec --config /tmp/veil-e2e-test/config.yaml -- env 2>/dev/null | grep "DOPPLER_TOKEN" || true)
+if [ -z "$OUTPUT" ]; then
+    echo "✓ DOPPLER_TOKEN correctly stripped from child environment"
+else
+    echo "✗ FAILED: DOPPLER_TOKEN leaked to child"
+    exit 1
+fi
+
+# Test 5: Verify sandbox flag returns error
+echo ""
+echo "Test 5: Sandbox flag error handling"
+./veil exec --sandbox --config /tmp/veil-e2e-test/config.yaml -- echo "test" 2>&1 | grep -q "not yet implemented"
+if [ $? -eq 0 ]; then
+    echo "✓ Sandbox flag returns appropriate error"
+else
+    echo "✗ FAILED: Sandbox flag did not return expected error"
     exit 1
 fi
 

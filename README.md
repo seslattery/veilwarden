@@ -62,6 +62,22 @@ veil exec -- python my_agent.py
 
 The `veil exec` command starts a local MITM proxy, injects environment variables (HTTP_PROXY, CA certs), and runs your command. All HTTPS requests are intercepted and API keys are injected transparently.
 
+#### Security Notes
+
+**Current Limitations:**
+
+1. **Environment Variable Handling**: Only `DOPPLER_TOKEN` is stripped from the child process environment. Other secrets (like `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) remain visible to the agent process if you export them. This is by design for flexibility, but means agents could potentially access these values directly via `os.getenv()`. Future versions may add more aggressive environment sanitization.
+
+2. **Policy Enforcement**: Policies are enforced when configured (see [Policy Configuration](#policy-configuration) below), but default to allow-all for backward compatibility. For production use, always configure `policy.engine: opa` or `policy.engine: config` in your `config.yaml`.
+
+3. **Sandbox Mode**: The `--sandbox` flag is not yet implemented. Attempting to use it will return an error. Track implementation progress in [GitHub Issues](https://github.com/yourusername/veilwarden/issues).
+
+**Best Practices:**
+
+- Use Doppler integration (coming soon) instead of exporting secrets to your shell
+- Always configure policy enforcement for production workloads
+- Review the [Security Design](docs/plans/2025-11-19-security-fixes-design.md) for threat model details
+
 ### Core Benefits
 
 **1. Zero-Trust Security for Agents & Services**
