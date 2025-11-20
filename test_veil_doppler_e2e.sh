@@ -112,7 +112,7 @@ echo ""
 echo "Creating veil configuration with Doppler..."
 cat >"${CONFIG_DIR}/config.yaml" <<EOF
 routes:
-  - host: "${ECHO_ADDR}"
+  - host: "127.0.0.1"
     secret_id: ${SECRET_ID}
     header_name: Authorization
     header_value_template: "Bearer {{secret}}"
