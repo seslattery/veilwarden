@@ -84,8 +84,8 @@ export DOPPLER_CONFIG="dev_personal"
 The test automatically sets the secret in Doppler, but if it fails:
 
 ```bash
-# Manually set the secret
-doppler secrets set VEIL_TEST_API_KEY --value "veil-doppler-test-secret-12345"
+# Manually set the secret (reads value from stdin)
+echo "veil-doppler-test-secret-12345" | doppler secrets set VEIL_TEST_API_KEY --no-interactive
 
 # Verify it's set
 doppler secrets get VEIL_TEST_API_KEY --plain

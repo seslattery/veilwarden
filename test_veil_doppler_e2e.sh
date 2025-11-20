@@ -65,7 +65,7 @@ echo "✓ Binaries built"
 # Set the secret in Doppler
 echo ""
 echo "Setting secret ${SECRET_ID} in Doppler..."
-printf "%s" "${SECRET_VALUE}" | doppler secrets set "${SECRET_ID}" \
+echo "${SECRET_VALUE}" | doppler secrets set "${SECRET_ID}" \
   --no-interactive \
   --project "${DOPPLER_PROJECT}" \
   --config "${DOPPLER_CONFIG}" >/dev/null
