@@ -44,7 +44,7 @@ mkdir -p /tmp/veil-mitm-e2e-test/policies
 cat > /tmp/veil-mitm-e2e-test/config.yaml <<'EOF'
 routes:
   - host: "127.0.0.1"
-    secret_id: GITHUB_TOKEN
+    secret_id: TEST_API_KEY
     header_name: Authorization
     header_value_template: "Bearer {{secret}}"
 
@@ -74,7 +74,7 @@ CLIENTEOF
 chmod +x /tmp/test_client.sh
 
 # Run client through veil proxy
-OUTPUT=$(GITHUB_TOKEN=secret-test-key-12345 ./veil exec \
+OUTPUT=$(TEST_API_KEY=secret-test-key-12345 ./veil exec \
   --config /tmp/veil-mitm-e2e-test/config.yaml \
   -- /tmp/test_client.sh 2>/dev/null)
 
@@ -137,14 +137,14 @@ fi
 echo ""
 echo "Test 4: Verify secret handling"
 
-OUTPUT=$(GITHUB_TOKEN=should-not-appear ./veil exec \
+OUTPUT=$(TEST_API_KEY=should-not-appear ./veil exec \
   --config /tmp/veil-mitm-e2e-test/config.yaml \
-  -- env 2>/dev/null | grep "GITHUB_TOKEN" || echo "")
+  -- env 2>/dev/null | grep "TEST_API_KEY" || echo "")
 
 if [ -n "$OUTPUT" ] && echo "$OUTPUT" | grep -q "should-not-appear"; then
-    echo "✓ GITHUB_TOKEN visible in child environment (current design)"
+    echo "✓ TEST_API_KEY visible in child environment (current design)"
 else
-    echo "⚠️  GITHUB_TOKEN not in environment (expected for current implementation)"
+    echo "⚠️  TEST_API_KEY not in environment (expected for current implementation)"
 fi
 
 # Test 5: End-to-end with Python client
@@ -171,7 +171,7 @@ except Exception as e:
     sys.exit(1)
 PYEOF
 
-    OUTPUT=$(timeout 10 env GITHUB_TOKEN=python-test-key ./veil exec \
+    OUTPUT=$(timeout 10 env TEST_API_KEY=python-test-key ./veil exec \
       --config /tmp/veil-mitm-e2e-test/config.yaml \
       -- python3 /tmp/test_client.py 2>/dev/null || echo '{"timeout": true}')
 
@@ -203,7 +203,7 @@ done
 MULTIEOF
 chmod +x /tmp/multi_request.sh
 
-OUTPUT=$(GITHUB_TOKEN=multi-test-key ./veil exec \
+OUTPUT=$(TEST_API_KEY=multi-test-key ./veil exec \
   --config /tmp/veil-mitm-e2e-test/config.yaml \
   -- /tmp/multi_request.sh 2>/dev/null)
 
