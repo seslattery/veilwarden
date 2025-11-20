@@ -189,9 +189,54 @@ else
     echo "⊘ Python or requests library not available, skipping Python client test"
 fi
 
-# Test 6: Multiple requests through same proxy session
+# Test 6: Doppler config parsing with fallback to environment
 echo ""
-echo "Test 6: Multiple requests in single session"
+echo "Test 6: Doppler config with fallback to environment"
+
+# Create config with Doppler section
+cat > /tmp/veil-mitm-e2e-test/config-doppler.yaml <<'EOF'
+routes:
+  - host: "127.0.0.1"
+    secret_id: DOPPLER_TEST_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+
+doppler:
+  project: test-project
+  config: dev
+  cache_ttl: 5m
+
+policy:
+  engine: disabled
+EOF
+
+# Test without DOPPLER_TOKEN (should fallback to environment)
+cat > /tmp/test_doppler_fallback.sh <<'DOPPLEREOF'
+#!/bin/bash
+curl -s http://127.0.0.1:9090/doppler-test \
+  -H "Content-Type: application/json" \
+  -d '{"test":"doppler-fallback"}'
+DOPPLEREOF
+chmod +x /tmp/test_doppler_fallback.sh
+
+# Ensure DOPPLER_TOKEN is not set for this test
+unset DOPPLER_TOKEN
+
+OUTPUT=$(DOPPLER_TEST_KEY=fallback-secret ./veil exec \
+  --config /tmp/veil-mitm-e2e-test/config-doppler.yaml \
+  -- /tmp/test_doppler_fallback.sh 2>/dev/null)
+
+if echo "$OUTPUT" | jq -e '.headers.Authorization[0] == "Bearer fallback-secret"' > /dev/null 2>&1; then
+    echo "✓ Doppler config present but falls back to environment (DOPPLER_TOKEN not set)"
+else
+    echo "✗ FAILED: Fallback to environment failed with Doppler config"
+    echo "Response: $OUTPUT"
+    exit 1
+fi
+
+# Test 7: Multiple requests through same proxy session
+echo ""
+echo "Test 7: Multiple requests in single session"
 
 cat > /tmp/multi_request.sh <<'MULTIEOF'
 #!/bin/bash
@@ -223,6 +268,7 @@ echo "Summary:"
 echo "  ✓ Secret injection works through MITM proxy"
 echo "  ✓ Proxy environment variables configured correctly"
 echo "  ✓ CA certificate generated and accessible"
+echo "  ✓ Doppler config parsing with fallback to environment"
 echo "  ✓ Multiple requests handled in single session"
 if command -v python3 &> /dev/null; then
     echo "  ✓ Python client works through proxy"
