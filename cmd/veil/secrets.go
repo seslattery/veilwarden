@@ -33,9 +33,14 @@ func buildSecretStore(ctx context.Context, cfg *veilConfig) (proxy.SecretStore, 
 		}
 
 		// Create Doppler store with options from config
+		baseURL := os.Getenv("DOPPLER_API_URL")
+		if baseURL == "" {
+			baseURL = "https://api.doppler.com"
+		}
+
 		return doppler.NewStore(&doppler.Options{
 			Token:    dopplerToken,
-			BaseURL:  "https://api.doppler.com",
+			BaseURL:  baseURL,
 			Project:  cfg.Doppler.Project,
 			Config:   cfg.Doppler.Config,
 			CacheTTL: cacheTTL,
