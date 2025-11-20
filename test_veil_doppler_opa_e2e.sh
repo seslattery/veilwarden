@@ -454,19 +454,20 @@ else
     exit 1
 fi
 
-# Test 6: Verify HTTPS interception works (if curl supports it)
+# Test 6: Verify MITM Proxy Intercepts HTTP Requests
 echo ""
 echo "==================================================================="
 echo "Test 6: Verify MITM Proxy Intercepts HTTP Requests"
 echo "==================================================================="
 echo ""
 echo "Testing that HTTP requests actually go through the proxy..."
+echo "Making an allowed request to verify full proxy interception..."
 echo ""
 
 cat >"${CONFIG_DIR}/test_proxy_intercept.sh" <<'CLIENTEOF'
 #!/bin/bash
-# Make a request and check if it was intercepted by looking for injected header
-curl -s http://127.0.0.1:9098/proxy-test -X GET
+# Make an allowed request to verify proxy interception with secret injection
+curl -s http://127.0.0.1:9098/allowed -X GET
 CLIENTEOF
 chmod +x "${CONFIG_DIR}/test_proxy_intercept.sh"
 
@@ -476,22 +477,35 @@ OUTPUT=$(DOPPLER_TOKEN="mock-token" \
   --config "${CONFIG_DIR}/config.yaml" \
   -- "${CONFIG_DIR}/test_proxy_intercept.sh" 2>/dev/null)
 
-# If the request has the Authorization header, it means the proxy intercepted it
+echo "Response:"
+echo "${OUTPUT}" | jq '.'
+echo ""
+
+# Verify proxy intercepted and injected Authorization header
 if echo "${OUTPUT}" | jq -e '.headers.Authorization' >/dev/null 2>&1; then
     AUTH_HEADER=$(echo "${OUTPUT}" | jq -r '.headers.Authorization[0]')
     echo "✅ MITM proxy successfully intercepted HTTP request"
     echo "   Proof: Authorization header was injected by proxy"
     echo "   Header value: ${AUTH_HEADER}"
 else
-    echo "⚠️  Could not verify proxy interception (request may have bypassed proxy)"
+    echo "✗ FAILED: Authorization header not injected"
     echo "   Response: ${OUTPUT}"
+    exit 1
 fi
 
-# Test 7: Verify proxy connection header
+# Verify proxy connection header
 if echo "${OUTPUT}" | jq -e '.headers["Proxy-Connection"]' >/dev/null 2>&1; then
-    echo "✅ Proxy-Connection header present (confirms request went through proxy)"
+    echo "✅ Proxy-Connection header present (confirms request routed through proxy)"
 else
-    echo "⚠️  Proxy-Connection header not found"
+    echo "✗ FAILED: Proxy-Connection header not found"
+    exit 1
+fi
+
+# Verify Accept-Encoding header (added by proxy)
+if echo "${OUTPUT}" | jq -e '.headers["Accept-Encoding"]' >/dev/null 2>&1; then
+    ENCODING=$(echo "${OUTPUT}" | jq -r '.headers["Accept-Encoding"][0]')
+    echo "✅ Accept-Encoding header present: ${ENCODING}"
+    echo "   This proves the proxy modified the request"
 fi
 
 echo ""
