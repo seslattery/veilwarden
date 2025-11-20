@@ -1,4 +1,4 @@
-package main
+package doppler
 
 import (
 	"context"
@@ -39,14 +39,14 @@ func TestDopplerSecretStoreFetchAndCache(t *testing.T) {
 		}),
 	}
 
-	store := newDopplerSecretStore(&dopplerOptions{
-		token:    "token",
-		baseURL:  "https://doppler.test",
-		project:  "proj",
-		config:   "dev",
-		client:   client,
-		cacheTTL: time.Minute,
-		timeout:  2 * time.Second,
+	store := NewStore(&Options{
+		Token:    "token",
+		BaseURL:  "https://doppler.test",
+		Project:  "proj",
+		Config:   "dev",
+		Client:   client,
+		CacheTTL: time.Minute,
+		Timeout:  2 * time.Second,
 	})
 
 	ctx := context.Background()
@@ -80,12 +80,12 @@ func TestDopplerSecretStoreHTTPError(t *testing.T) {
 		}),
 	}
 
-	store := newDopplerSecretStore(&dopplerOptions{
-		token:   "bad",
-		baseURL: "https://doppler.test",
-		project: "proj",
-		config:  "dev",
-		client:  client,
+	store := NewStore(&Options{
+		Token:   "bad",
+		BaseURL: "https://doppler.test",
+		Project: "proj",
+		Config:  "dev",
+		Client:  client,
 	})
 	if _, err := store.Get(context.Background(), "stripe"); err == nil {
 		t.Fatalf("expected error")
@@ -103,12 +103,12 @@ func TestDopplerSecretStoreAPIFailure(t *testing.T) {
 		}),
 	}
 
-	store := newDopplerSecretStore(&dopplerOptions{
-		token:   "t",
-		baseURL: "https://doppler.test",
-		project: "proj",
-		config:  "dev",
-		client:  client,
+	store := NewStore(&Options{
+		Token:   "t",
+		BaseURL: "https://doppler.test",
+		Project: "proj",
+		Config:  "dev",
+		Client:  client,
 	})
 	if _, err := store.Get(context.Background(), "missing"); err == nil {
 		t.Fatalf("expected api error")

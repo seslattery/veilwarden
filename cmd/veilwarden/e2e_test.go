@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"veilwarden/internal/doppler"
 )
 
 // TestE2EBasicProxy tests the basic proxy functionality with a real echo server
@@ -524,13 +526,13 @@ func startProxyServer(t *testing.T, cfg proxyServerConfig) *http.Server {
 	// Build secret store
 	var store secretStore
 	if cfg.dopplerToken != "" {
-		store = newDopplerSecretStore(&dopplerOptions{
-			token:    cfg.dopplerToken,
-			baseURL:  "https://api.doppler.com",
-			project:  cfg.dopplerProject,
-			config:   cfg.dopplerConfig,
-			cacheTTL: 5 * time.Minute,
-			timeout:  5 * time.Second,
+		store = doppler.NewStore(&doppler.Options{
+			Token:    cfg.dopplerToken,
+			BaseURL:  "https://api.doppler.com",
+			Project:  cfg.dopplerProject,
+			Config:   cfg.dopplerConfig,
+			CacheTTL: 5 * time.Minute,
+			Timeout:  5 * time.Second,
 		})
 	} else {
 		store = &configSecretStore{secrets: appCfg.secrets}

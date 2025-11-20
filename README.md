@@ -62,6 +62,48 @@ veil exec -- python my_agent.py
 
 The `veil exec` command starts a local MITM proxy, injects environment variables (HTTP_PROXY, CA certs), and runs your command. All HTTPS requests are intercepted and API keys are injected transparently.
 
+### Secret Management with Doppler
+
+VeilWarden veil CLI supports two methods for secret management:
+
+#### Option 1: Environment Variables (Default)
+
+Secrets are loaded from environment variables based on the `secret_id` in your routes:
+
+```bash
+export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
+veil exec -- python my_agent.py
+```
+
+#### Option 2: Doppler Integration
+
+For centralized secret management, configure Doppler in your `~/.veilwarden/config.yaml`:
+
+```yaml
+doppler:
+  project: my-project
+  config: dev           # e.g., dev, staging, prod
+  cache_ttl: 5m        # Optional, default 5m
+```
+
+Then set your Doppler token:
+
+```bash
+export DOPPLER_TOKEN=dp.st.dev.xxxxx
+veil exec -- python my_agent.py
+```
+
+**Benefits:**
+- Secrets never touch your local environment
+- Automatic secret rotation from Doppler
+- Centralized secret management across teams
+- Per-environment configuration (dev, staging, prod)
+
+**Fallback Behavior**: If Doppler is configured but `DOPPLER_TOKEN` is not set, veil will automatically fall back to loading secrets from environment variables.
+
+For more information, see [Doppler documentation](https://docs.doppler.com/).
+
 #### Security Notes
 
 **Current Limitations:**
@@ -74,10 +116,9 @@ The `veil exec` command starts a local MITM proxy, injects environment variables
 
 **Best Practices:**
 
-- Use Doppler integration (coming soon) instead of exporting secrets to your shell
+- Use Doppler integration instead of exporting secrets to your shell
 - Always configure policy enforcement for production workloads
 - Review the [Security Design](docs/plans/2025-11-19-security-fixes-design.md) for threat model details
-
 ### Core Benefits
 
 **1. Zero-Trust Security for Agents & Services**

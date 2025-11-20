@@ -122,13 +122,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// For MVP: Use in-memory secret store (TODO: Doppler integration)
-	secrets := map[string]string{
-		"OPENAI_API_KEY":    os.Getenv("OPENAI_API_KEY"),
-		"ANTHROPIC_API_KEY": os.Getenv("ANTHROPIC_API_KEY"),
-		"GITHUB_TOKEN":      os.Getenv("GITHUB_TOKEN"),
+	// Build secret store (Doppler or in-memory)
+	secretStore, err := buildSecretStore(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("failed to build secret store: %w", err)
 	}
-	secretStore := proxy.NewMemorySecretStore(secrets)
 
 	// Build policy engine from config (defaults to allow-all if not configured)
 	policyEngine, err := buildPolicyEngine(cfg)
