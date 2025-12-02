@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadVeilConfig_WithDoppler(t *testing.T) {
@@ -276,4 +279,139 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestLoadVeilConfig_WithSandbox(t *testing.T) {
+	configYAML := `
+routes:
+  - host: api.openai.com
+    secret_id: OPENAI_API_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+
+sandbox:
+  enabled: true
+  backend: anthropic
+  working_dir: /workspace
+  mounts:
+    - host: ./project
+      container: /workspace
+      readonly: false
+    - host: ~/.cache/data
+      container: /data
+      readonly: true
+`
+
+	// Write temp config file
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(configYAML), 0644)
+	require.NoError(t, err)
+
+	// Load config
+	cfg, err := loadVeilConfig(configPath)
+	require.NoError(t, err)
+
+	// Verify sandbox config loaded
+	require.NotNil(t, cfg.Sandbox)
+	assert.True(t, cfg.Sandbox.Enabled)
+	assert.Equal(t, "anthropic", cfg.Sandbox.Backend)
+	assert.Equal(t, "/workspace", cfg.Sandbox.WorkingDir)
+
+	// Verify mounts
+	require.Len(t, cfg.Sandbox.Mounts, 2)
+
+	assert.Equal(t, "./project", cfg.Sandbox.Mounts[0].HostPath)
+	assert.Equal(t, "/workspace", cfg.Sandbox.Mounts[0].ContainerPath)
+	assert.False(t, cfg.Sandbox.Mounts[0].ReadOnly)
+
+	assert.Equal(t, "~/.cache/data", cfg.Sandbox.Mounts[1].HostPath)
+	assert.Equal(t, "/data", cfg.Sandbox.Mounts[1].ContainerPath)
+	assert.True(t, cfg.Sandbox.Mounts[1].ReadOnly)
+}
+
+func TestLoadVeilConfig_WithoutSandbox(t *testing.T) {
+	configYAML := `
+routes:
+  - host: api.openai.com
+    secret_id: OPENAI_API_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+`
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	err := os.WriteFile(configPath, []byte(configYAML), 0644)
+	require.NoError(t, err)
+
+	cfg, err := loadVeilConfig(configPath)
+	require.NoError(t, err)
+
+	// Sandbox should be nil when not configured
+	assert.Nil(t, cfg.Sandbox)
+}
+
+func TestLoadVeilConfig_SandboxValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "missing backend",
+			yaml: `
+sandbox:
+  enabled: true
+  mounts: []
+`,
+			wantErr: "sandbox.backend is required",
+		},
+		{
+			name: "invalid backend",
+			yaml: `
+sandbox:
+  enabled: true
+  backend: invalid-backend
+  mounts: []
+`,
+			wantErr: "unknown sandbox backend",
+		},
+		{
+			name: "mount missing host path",
+			yaml: `
+sandbox:
+  enabled: true
+  backend: anthropic
+  mounts:
+    - container: /workspace
+      readonly: false
+`,
+			wantErr: "mount host path is required",
+		},
+		{
+			name: "mount missing container path",
+			yaml: `
+sandbox:
+  enabled: true
+  backend: anthropic
+  mounts:
+    - host: ./project
+      readonly: false
+`,
+			wantErr: "mount container path is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			configPath := filepath.Join(tmpDir, "config.yaml")
+			err := os.WriteFile(configPath, []byte(tt.yaml), 0644)
+			require.NoError(t, err)
+
+			_, err = loadVeilConfig(configPath)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
 }

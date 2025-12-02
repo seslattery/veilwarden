@@ -11,9 +11,10 @@ import (
 
 // Simplified config types for veil CLI
 type veilConfig struct {
-	Routes  []veilRouteEntry  `yaml:"routes"`
-	Policy  *veilPolicyEntry  `yaml:"policy,omitempty"`
-	Doppler *veilDopplerEntry `yaml:"doppler,omitempty"`
+	Routes  []veilRouteEntry   `yaml:"routes"`
+	Policy  *veilPolicyEntry   `yaml:"policy,omitempty"`
+	Doppler *veilDopplerEntry  `yaml:"doppler,omitempty"`
+	Sandbox *veilSandboxEntry  `yaml:"sandbox,omitempty"`
 }
 
 type veilRouteEntry struct {
@@ -35,6 +36,19 @@ type veilDopplerEntry struct {
 	Project  string `yaml:"project"`
 	Config   string `yaml:"config"`
 	CacheTTL string `yaml:"cache_ttl,omitempty"` // e.g., "5m", "1h"
+}
+
+type veilSandboxEntry struct {
+	Enabled    bool             `yaml:"enabled"`
+	Backend    string           `yaml:"backend"`
+	WorkingDir string           `yaml:"working_dir,omitempty"`
+	Mounts     []veilMountEntry `yaml:"mounts,omitempty"`
+}
+
+type veilMountEntry struct {
+	HostPath      string `yaml:"host"`
+	ContainerPath string `yaml:"container"`
+	ReadOnly      bool   `yaml:"readonly"`
 }
 
 func loadVeilConfig(path string) (*veilConfig, error) {
@@ -69,6 +83,32 @@ func loadVeilConfig(path string) (*veilConfig, error) {
 		if cfg.Doppler.CacheTTL != "" {
 			if _, err := time.ParseDuration(cfg.Doppler.CacheTTL); err != nil {
 				return nil, fmt.Errorf("invalid doppler.cache_ttl: %w", err)
+			}
+		}
+	}
+
+	// Validate Sandbox configuration if present
+	if cfg.Sandbox != nil && cfg.Sandbox.Enabled {
+		if cfg.Sandbox.Backend == "" {
+			return nil, fmt.Errorf("sandbox.backend is required when sandbox is enabled")
+		}
+
+		// Validate backend is known
+		validBackends := map[string]bool{
+			"anthropic": true,
+			// Future: "gvisor", "firecracker", etc.
+		}
+		if !validBackends[cfg.Sandbox.Backend] {
+			return nil, fmt.Errorf("unknown sandbox backend: %s (available: anthropic)", cfg.Sandbox.Backend)
+		}
+
+		// Validate mounts
+		for i, mount := range cfg.Sandbox.Mounts {
+			if mount.HostPath == "" {
+				return nil, fmt.Errorf("sandbox.mounts[%d]: mount host path is required", i)
+			}
+			if mount.ContainerPath == "" {
+				return nil, fmt.Errorf("sandbox.mounts[%d]: mount container path is required", i)
 			}
 		}
 	}
