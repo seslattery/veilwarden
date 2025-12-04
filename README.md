@@ -59,7 +59,7 @@ Veilwarden gives you:
 
 ```bash
 # Install
-go install github.com/yourusername/veilwarden/cmd/veil@latest
+go install github.com/seslattery/veilwarden/cmd/veil@latest
 
 # Initialize config
 veil init

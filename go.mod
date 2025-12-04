@@ -1,4 +1,4 @@
-module veilwarden
+module github.com/seslattery/veilwarden
 
 go 1.25
 
