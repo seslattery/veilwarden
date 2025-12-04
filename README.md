@@ -1,37 +1,58 @@
+````md
 ![veilwarden](https://github.com/user-attachments/assets/a943fe76-1e34-48b7-80f1-89b48cedd593)
 
 # Veilwarden
 
-> Secure guardrails for AI agents: credential injection + sandbox isolation.
+> **Run powerful AI agents without ever handing them your secrets.**
+> Credential injection at the network layer + locked-down sandbox isolation.
 
-Veilwarden lets you safely run AI agents with API access while preventing them from:
-- **Seeing your credentials** - secrets injected at the network layer, never in code
-- **Accessing sensitive files** - sandbox blocks `~/.ssh`, `~/.aws`, credentials, etc.
-- **Bypassing the proxy** - network isolation forces all traffic through Veilwarden
-- **Making unauthorized requests** - OPA policies control what endpoints agents can call
+Veilwarden is a sidecar proxy + sandbox that lets you give AI agents real API access **without** giving them:
 
-```
+- **Your API keys** – secrets are injected at the network layer, never into code or env
+- **Your dotfiles & creds** – sandbox blocks `~/.ssh`, `~/.aws`, `~/.config`, etc.
+- **A way around the proxy** – network isolation forces all traffic through Veilwarden
+- **Unlimited reach** – OPA policies control *which* APIs and endpoints they can call
+
+```text
 ┌─────────────────────────────────────────────────────────────────┐
-│                         SANDBOX                                 │
+│                             SANDBOX                            │
 │  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐     │
-│  │  AI Agent   │ ──── │  Veilwarden │ ──── │  APIs       │     │
-│  │  (no keys)  │      │  (injects   │      │  (OpenAI,   │     │
-│  │             │      │   secrets)  │      │   etc.)     │     │
+│  │  AI Agent   │ ──── │  Veilwarden │ ──── │   APIs      │     │
+│  │  (no keys)  │      │ (injects    │      │ (OpenAI,    │     │
+│  │             │      │   secrets)  │      │  etc.)      │     │
 │  └─────────────┘      └─────────────┘      └─────────────┘     │
 │        │                                                        │
 │        ├── ✗ Can't read ~/.ssh, ~/.aws, ~/.config              │
 │        ├── ✗ Can't bypass proxy (network isolated)             │
 │        └── ✗ Can't see DOPPLER_TOKEN or raw credentials        │
 └─────────────────────────────────────────────────────────────────┘
-```
+````
 
-**Why?**
-- **Zero-trust agents** - Secrets can't leak from code that never has them
-- **Defense in depth** - Even if an agent is compromised, it can't exfiltrate credentials or SSH keys
-- **Centralized control** - Manage credentials and policies across all agents in one place
-- **Drop-in security** - No code changes required; works with any HTTP client
+> **Status:** Experimental – APIs may change; security hardening is ongoing.
 
-> **Status:** Experimental - expect breaking changes
+---
+
+## Why Veilwarden?
+
+Modern AI agents are **powerful** and **unpredictable**. They browse the web, call tools, and hit APIs—often with full access to your environment.
+
+Veilwarden gives you:
+
+* 🧱 **Zero-trust agents**
+  Agents never see raw secrets. Keys are added to requests *after* they leave the process.
+
+* 🛡️ **Defense in depth**
+  Even if the agent is prompt-injected, jailbroken, or outright malicious, it can’t:
+
+  * Read SSH keys, cloud creds, or Doppler tokens
+  * Reach the network without going through the proxy
+  * Call APIs you haven’t explicitly allowed
+
+* 🎛 **Centralized control**
+  Manage routes, secrets, and OPA policies in one place instead of sprinkling config across scripts and tools.
+
+* 🧩 **Drop-in integration**
+  No SDKs, no code changes. Works with any HTTP client that honors proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`).
 
 ---
 
@@ -44,7 +65,7 @@ go install github.com/yourusername/veilwarden/cmd/veil@latest
 # Initialize config
 veil init
 
-# Set your API keys
+# Set your API keys (env or Doppler)
 export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 
@@ -56,19 +77,32 @@ veil exec -- curl https://api.openai.com/v1/models
 veil exec --sandbox -- python untrusted_agent.py
 ```
 
-Your agent makes normal HTTP requests. Veilwarden intercepts them and adds the appropriate `Authorization` header based on the destination host.
+Your agent keeps making normal HTTP requests. Veilwarden:
 
-With `--sandbox`, the agent also runs in an isolated environment that blocks access to sensitive files and forces all network traffic through the proxy.
+1. Intercepts the outbound request
+2. Looks up the route for the target host
+3. Injects the appropriate `Authorization` or custom header
+4. Applies policy (OPA) and network / filesystem sandboxing if enabled
+
+With `--sandbox`, the agent runs in an isolated environment that:
+
+* Blocks access to sensitive files
+* Forces all network traffic through Veilwarden
+* Prevents direct TCP / DNS exfiltration
 
 ---
 
 ## Configuration
 
-Config lives at `~/.veilwarden/config.yaml`. Run `veil init` to create it.
+Config lives at `~/.veilwarden/config.yaml`.
+
+```bash
+veil init   # Creates the initial config file
+```
 
 ### Routes (Required)
 
-Map hosts to secrets:
+Map destination hosts to secrets and headers:
 
 ```yaml
 routes:
@@ -83,9 +117,15 @@ routes:
     header_value_template: "{{secret}}"
 ```
 
+When a request goes to `api.openai.com`, Veilwarden:
+
+* Resolves `secret_id` → actual secret (env or Doppler)
+* Renders `header_value_template`
+* Injects the header on the wire
+
 ### Secrets
 
-**Option A: Environment variables** (default)
+#### Option A: Environment variables (default)
 
 Secrets are read from env vars matching `secret_id`:
 
@@ -94,9 +134,9 @@ export OPENAI_API_KEY=sk-...
 veil exec -- python agent.py
 ```
 
-**Option B: Doppler**
+#### Option B: Doppler (recommended for teams)
 
-For centralized secret management:
+Use Doppler as a centralized secret store:
 
 ```yaml
 doppler:
@@ -109,11 +149,13 @@ export DOPPLER_TOKEN=dp.st.xxx
 veil exec -- python agent.py
 ```
 
-If Doppler is configured but `DOPPLER_TOKEN` isn't set, falls back to env vars.
+If Doppler is configured but `DOPPLER_TOKEN` is missing, Veilwarden falls back to environment variables.
 
-### Policy (Optional)
+---
 
-Control which requests are allowed using [OPA](https://www.openpolicyagent.org/):
+### Policy (Optional, but powerful)
+
+Use [OPA](https://www.openpolicyagent.org/) to enforce *which* requests are allowed:
 
 ```yaml
 policy:
@@ -122,25 +164,38 @@ policy:
   decision_path: veilwarden/authz/allow
 ```
 
-See `policies/example.rego` for policy examples.
+Example decisions you can encode:
+
+* “Only allow `POST /v1/chat/completions` to `api.openai.com`.”
+* “Block requests with bodies larger than N KB.”
+* “Deny outbound calls to unknown hosts.”
+
+See `policies/example.rego` for examples.
 
 ---
 
 ## Sandbox Isolation
 
-The sandbox is a critical security layer that prevents AI agents from accessing sensitive files or bypassing the proxy. When enabled, agents run in a restricted environment with:
+The sandbox is the second half of Veilwarden’s security story: it keeps agents from rummaging through your machine or sneaking traffic around the proxy.
 
-**Network Isolation:**
-- All network traffic forced through the Veilwarden proxy
-- Direct TCP connections blocked (prevents proxy bypass)
-- DNS resolution controlled (prevents data exfiltration via DNS)
-- Raw socket creation blocked
+When enabled, agents run with:
 
-**Filesystem Isolation:**
-- Sensitive directories blocked by default (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.doppler`, etc.)
-- Write access limited to specified directories only
-- Symlink/hardlink attacks prevented
-- Path traversal attacks blocked
+### Network Isolation
+
+* ✅ All traffic forced through Veilwarden’s proxy
+* ✅ Direct TCP connections blocked (no bypassing the proxy)
+* ✅ DNS resolution controlled (reduces data-exfil via DNS tricks)
+* ✅ Raw socket creation blocked
+
+### Filesystem Isolation
+
+* ✅ Sensitive directories blocked by default:
+  `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.doppler`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `/etc/shadow`, `/etc/sudoers`, etc.
+* ✅ Write access limited to explicitly allowed directories
+* ✅ Symlink / hardlink tricks mitigated
+* ✅ Path traversal (`../../..`) blocked
+
+Example config:
 
 ```yaml
 sandbox:
@@ -149,65 +204,83 @@ sandbox:
   working_dir: ./my-project
   allowed_write_paths:
     - ./my-project                 # Agent can write here
-    - /tmp/agent-workspace         # And here
+    - /tmp/agent-workspace
   denied_read_paths:
-    - ~/.ssh                       # Blocked (also blocked by default)
+    - ~/.ssh
     - ~/.aws
     - ~/.config/gcloud
     - ~/secrets                    # Add your own sensitive paths
 ```
 
-**Backends:**
-| Backend | Platform | Implementation |
-|---------|----------|----------------|
-| `auto` | macOS/Linux | Native sandbox (recommended) |
-| `seatbelt` | macOS | Uses `sandbox-exec` |
-| `srt` | Any | Anthropic's [sandbox-runtime](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) |
+### Backends
 
-**Default blocked paths:** `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.azure`, `~/.doppler`, `~/.gnupg`, `~/.kube`, `~/.docker`, `/etc/shadow`, `/etc/sudoers`
+| Backend    | Platform    | Implementation                                                                                  |
+| ---------- | ----------- | ----------------------------------------------------------------------------------------------- |
+| `auto`     | macOS/Linux | Uses the native sandbox backend (recommended)                                                   |
+| `seatbelt` | macOS       | Uses `sandbox-exec` / seatbelt profiles                                                         |
+| `srt`      | Any         | Uses Anthropic’s [sandbox-runtime](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) |
 
-See [Sandbox Quickstart](docs/sandbox-quickstart.md) for detailed setup.
+See [Sandbox Quickstart](docs/sandbox-quickstart.md) for detailed setup and limitations.
 
 ---
 
 ## CLI Reference
 
 ```bash
-veil init                        # Create default config
-veil exec -- <command>           # Run command through proxy
-veil exec --sandbox -- <cmd>     # Force sandbox on
-veil exec --no-sandbox -- <cmd>  # Force sandbox off
-veil exec --verbose -- <cmd>     # Show proxy logs
+veil init                         # Create default config
+veil exec -- <command>            # Run command through proxy
+veil exec --sandbox -- <cmd>      # Force sandbox on
+veil exec --no-sandbox -- <cmd>   # Force sandbox off
+veil exec --verbose -- <cmd>      # Log proxy activity
+```
+
+Common patterns:
+
+```bash
+# Run a local dev server with protected API access
+veil exec --sandbox -- npm run dev
+
+# Test a one-off curl without exposing keys to shell history
+veil exec -- curl https://api.openai.com/v1/models
 ```
 
 ---
 
 ## Security Model
 
-Veilwarden provides **defense in depth** with multiple security layers:
+Veilwarden aims for **defense in depth** rather than “magic bullet” security.
 
-| Layer | Protection | Threat Mitigated |
-|-------|------------|------------------|
-| **Credential Injection** | Secrets added at network layer | Agent code never sees API keys |
-| **Network Isolation** | All traffic forced through proxy | Can't bypass proxy or exfiltrate data |
-| **Filesystem Sandbox** | Sensitive paths blocked | Can't read SSH keys, cloud credentials |
-| **OPA Policies** | Fine-grained request control | Limit which APIs/endpoints are accessible |
-| **Env Stripping** | `DOPPLER_TOKEN` removed | Can't access secret store directly |
+### Layers
 
-**What this means in practice:**
-- An AI agent can call OpenAI/Anthropic APIs without ever seeing the API keys
-- Even if the agent is jailbroken or malicious, it cannot:
-  - Read your SSH keys or cloud credentials
-  - Make direct network connections to exfiltrate data
-  - Access the Doppler token to fetch other secrets
-  - Call unauthorized API endpoints (with OPA enabled)
+| Layer                    | What it does                        | What it mitigates                       |
+| ------------------------ | ----------------------------------- | --------------------------------------- |
+| **Credential Injection** | Adds secrets only at network layer  | Agent code never sees API keys          |
+| **Network Isolation**    | Forces traffic through proxy        | Proxy bypass & blind exfiltration       |
+| **Filesystem Sandbox**   | Blocks sensitive paths              | Reading SSH keys, cloud creds, dotfiles |
+| **OPA Policies**         | Enforces fine-grained request rules | Overbroad or unexpected API usage       |
+| **Env Stripping**        | Removes `DOPPLER_TOKEN` from child  | Agent talking directly to secret store  |
 
-**Limitations:**
-- Other exported env vars are visible to child processes (use Doppler for sensitive values)
-- Sandbox is experimental (macOS seatbelt and srt backends available; Linux bubblewrap coming soon)
-- OPA policies default to allow-all for backward compatibility
+### In Practice
 
-See [SECURITY.md](docs/SECURITY.md) for the full threat model.
+With Veilwarden in front of your agents:
+
+* They *can* call OpenAI/Anthropic (or any HTTP API you route)
+* They *cannot*:
+
+  * Read `~/.ssh/id_ed25519`
+  * Grab `~/.aws/credentials` or `~/.config/gcloud`
+  * Reach random hosts without going through the proxy
+  * Enumerate Doppler environments using your `DOPPLER_TOKEN`
+  * Hit disallowed endpoints if you enforce OPA policies
+
+### Limitations
+
+* Other environment variables are still visible to child processes;
+  use Doppler or similar for truly sensitive values.
+* Sandbox and backends are experimental; expect rough edges.
+* OPA defaults to **allow all** if you don’t provide policies (for compatibility).
+
+For a full threat model and assumptions, see [SECURITY.md](docs/SECURITY.md).
 
 ---
 
@@ -226,4 +299,10 @@ just test-e2e      # E2E tests (requires DOPPLER_TOKEN + srt)
 just build         # Output: bin/veil
 ```
 
-Prerequisites: Go 1.21+, [just](https://github.com/casey/just) (optional)
+Prerequisites:
+
+* Go 1.21+
+* [`just`](https://github.com/casey/just) (optional but recommended)
+
+```
+```
