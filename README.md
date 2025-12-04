@@ -1,3 +1,6 @@
+
+![veilwarden](https://github.com/user-attachments/assets/a943fe76-1e34-48b7-80f1-89b48cedd593)
+
 # Veilwarden
 
 **Your AI agents shouldn't know your API keys.**
