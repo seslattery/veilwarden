@@ -346,3 +346,28 @@ Prerequisites:
 
 * Go 1.21+
 * [`just`](https://github.com/casey/just) (optional but recommended)
+
+### Code Layout
+
+```
+cmd/veil/                     # CLI entry point (thin layer)
+├── main.go                   # Entry point
+├── exec.go                   # exec command (flags → internal/exec)
+└── init.go                   # init command
+
+internal/                     # Private implementation
+├── config/                   # Config types, loading, validation
+├── env/                      # Environment filtering (secret stripping)
+├── secrets/                  # Secret store factory (Doppler/env)
+├── cert/                     # Ephemeral CA generation
+├── exec/                     # Main orchestration logic
+├── proxy/                    # MITM proxy (martian wrapper)
+├── policy/opa/               # OPA policy engine
+└── doppler/                  # Doppler API client
+
+pkg/warden/                   # Public sandbox API
+├── config.go                 # Sandbox config types
+├── backend.go                # Backend interface
+├── seatbelt.go               # macOS sandbox-exec backend
+└── srt.go                    # Anthropic SRT backend
+```
