@@ -164,6 +164,13 @@ policy:
   decision_path: veilwarden/authz/allow
 ```
 
+| Field | Purpose |
+|-------|---------|
+| `policy_path` | Filesystem directory containing `.rego` files |
+| `decision_path` | OPA query path (`<package>/<rule>`) to evaluate for allow/deny |
+
+All `.rego` files in `policy_path` are loaded, but only `decision_path` is queried per request. This lets you split policies across multiple files while having a single entrypoint.
+
 Example decisions you can encode:
 
 * “Only allow `POST /v1/chat/completions` to `api.openai.com`.”
@@ -189,11 +196,28 @@ When enabled, agents run with:
 
 ### Filesystem Isolation
 
-* ✅ Sensitive directories blocked by default:
-  `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.doppler`, `~/.kube`, `~/.docker`, `~/.config/gcloud`, `/etc/shadow`, `/etc/sudoers`, etc.
-* ✅ Write access limited to explicitly allowed directories
+The sandbox uses an **asymmetric security model**:
+
+| Operation | Default | Config |
+|-----------|---------|--------|
+| **Writes** | ❌ Denied everywhere | `allowed_write_paths` to permit |
+| **Reads** | ✅ Allowed everywhere | `denied_read_paths` to block |
+
+This design lets programs read system files they need (`/usr/lib`, `/etc/hosts`, etc.) while preventing writes outside your project. Sensitive paths must be explicitly blocked.
+
+**Protections:**
+* ✅ Writes denied by default—only `allowed_write_paths` are writable
+* ✅ Sensitive directories blocked via `denied_read_paths`
 * ✅ Symlink / hardlink tricks mitigated
 * ✅ Path traversal (`../../..`) blocked
+
+**Recommended `denied_read_paths`** (see `examples/claude-code/config.yaml`):
+```
+~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube, ~/.docker,
+~/.doppler, ~/.gnupg, ~/.vault-token, ~/.anthropic,
+~/.netrc, ~/.git-credentials, ~/.npmrc, ~/.pypirc,
+~/.bash_history, ~/.zsh_history
+```
 
 Example config:
 
@@ -218,7 +242,27 @@ sandbox:
 | ---------- | ----------- | ----------------------------------------------------------------------------------------------- |
 | `auto`     | macOS/Linux | Uses the native sandbox backend (recommended)                                                   |
 | `seatbelt` | macOS       | Uses `sandbox-exec` / seatbelt profiles                                                         |
-| `srt`      | Any         | Uses Anthropic’s [sandbox-runtime](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) |
+| `srt`      | Any         | Uses Anthropic's [sandbox-runtime](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) |
+
+### Environment Variable Stripping
+
+Veilwarden automatically strips environment variables that look like secrets:
+
+* **Pattern-based:** `*_KEY`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_CREDENTIAL`, `*_AUTH`, `*_PRIVATE`
+* **Known sensitive:** `AWS_SECRET_ACCESS_KEY`, `GITHUB_TOKEN`, `KUBECONFIG`, `GOOGLE_APPLICATION_CREDENTIALS`, etc.
+
+Non-secret vars (`PATH`, `HOME`, `EDITOR`, `NODE_ENV`, etc.) pass through normally.
+
+**Need to pass a specific secret-like var?** Use `env_passthrough`:
+
+```yaml
+sandbox:
+  enabled: true
+  backend: auto
+  env_passthrough:
+    - MY_CUSTOM_TOKEN      # Explicitly allow this through
+    - LEGACY_API_KEY       # And this one
+```
 
 See [Sandbox Quickstart](docs/sandbox-quickstart.md) for detailed setup and limitations.
 
@@ -258,7 +302,7 @@ Veilwarden aims for **defense in depth** rather than “magic bullet” security
 | **Network Isolation**    | Forces traffic through proxy        | Proxy bypass & blind exfiltration       |
 | **Filesystem Sandbox**   | Blocks sensitive paths              | Reading SSH keys, cloud creds, dotfiles |
 | **OPA Policies**         | Enforces fine-grained request rules | Overbroad or unexpected API usage       |
-| **Env Stripping**        | Removes `DOPPLER_TOKEN` from child  | Agent talking directly to secret store  |
+| **Env Stripping**        | Removes secret-like env vars        | Agent can't see `*_KEY`, `*_TOKEN`, etc |
 
 ### In Practice
 
@@ -270,15 +314,15 @@ With Veilwarden in front of your agents:
   * Read `~/.ssh/id_ed25519`
   * Grab `~/.aws/credentials` or `~/.config/gcloud`
   * Reach random hosts without going through the proxy
-  * Enumerate Doppler environments using your `DOPPLER_TOKEN`
+  * See env vars like `OPENAI_API_KEY`, `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`
   * Hit disallowed endpoints if you enforce OPA policies
 
 ### Limitations
 
-* Other environment variables are still visible to child processes;
-  use Doppler or similar for truly sensitive values.
+* Env stripping uses heuristics (`*_KEY`, `*_TOKEN`, `*_SECRET`, etc.). Secrets with
+  unusual names may slip through—use `env_passthrough` to explicitly allow vars you need.
 * Sandbox and backends are experimental; expect rough edges.
-* OPA defaults to **allow all** if you don’t provide policies (for compatibility).
+* OPA defaults to **allow all** if you don't provide policies (for compatibility).
 
 For a full threat model and assumptions, see [SECURITY.md](docs/SECURITY.md).
 

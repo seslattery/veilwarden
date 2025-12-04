@@ -265,7 +265,12 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build environment variables with proxy URL and CA cert
-	childEnv := buildProxyEnv(os.Environ(), proxyURL, ca.CertPath)
+	// Get passthrough list from sandbox config (if any)
+	var envPassthrough []string
+	if cfg.Sandbox != nil {
+		envPassthrough = cfg.Sandbox.EnvPassthrough
+	}
+	childEnv := buildProxyEnv(os.Environ(), proxyURL, ca.CertPath, envPassthrough)
 
 	// Execute command (sandboxed or direct)
 	var cmdErr error
@@ -302,24 +307,84 @@ func runExec(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
+// looksLikeSecret returns true if the env var name matches common secret patterns.
+// This is a heuristic to strip credentials that agents shouldn't see.
+func looksLikeSecret(key string) bool {
+	upper := strings.ToUpper(key)
+
+	// Common secret suffixes/patterns
+	secretPatterns := []string{
+		"_KEY",
+		"_TOKEN",
+		"_SECRET",
+		"_PASSWORD",
+		"_CREDENTIAL",
+		"_CREDENTIALS",
+		"_API_KEY",
+		"_APIKEY",
+		"_AUTH",
+		"_PRIVATE",
+	}
+
+	for _, pattern := range secretPatterns {
+		if strings.Contains(upper, pattern) {
+			return true
+		}
+	}
+
+	// Specific known sensitive vars
+	sensitiveVars := map[string]bool{
+		"DOPPLER_TOKEN":          true,
+		"AWS_ACCESS_KEY_ID":      true,
+		"AWS_SECRET_ACCESS_KEY":  true,
+		"AWS_SESSION_TOKEN":      true,
+		"GITHUB_TOKEN":           true,
+		"GH_TOKEN":               true,
+		"GITLAB_TOKEN":           true,
+		"NPM_TOKEN":              true,
+		"PYPI_TOKEN":             true,
+		"DOCKER_PASSWORD":        true,
+		"DOCKER_AUTH_CONFIG":     true,
+		"KUBECONFIG":             true,
+		"GOOGLE_APPLICATION_CREDENTIALS": true,
+	}
+
+	return sensitiveVars[upper]
+}
+
+func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string, envPassthrough []string) []string {
 	env := make([]string, 0, len(parentEnv)+15)
 
-	// Copy parent env, filtering out existing proxy vars
+	// Build passthrough set for O(1) lookup
+	passthroughSet := make(map[string]bool)
+	for _, key := range envPassthrough {
+		passthroughSet[strings.ToUpper(key)] = true
+	}
+
+	// Copy parent env, filtering out secrets and proxy vars
 	for _, e := range parentEnv {
 		key := strings.SplitN(e, "=", 2)[0]
+		upper := strings.ToUpper(key)
 		lower := strings.ToLower(key)
 
-		// Strip DOPPLER_TOKEN (master credential that can access all secrets)
-		if key == "DOPPLER_TOKEN" {
-			continue
-		}
-
+		// Always strip proxy-related vars (we set our own)
 		if strings.HasPrefix(lower, "http_proxy") ||
 			strings.HasPrefix(lower, "https_proxy") ||
 			strings.Contains(lower, "_ca_") {
-			continue // Skip existing proxy env vars
+			continue
 		}
+
+		// Check if explicitly allowed via passthrough
+		if passthroughSet[upper] {
+			env = append(env, e)
+			continue
+		}
+
+		// Strip vars that look like secrets
+		if looksLikeSecret(key) {
+			continue
+		}
+
 		env = append(env, e)
 	}
 

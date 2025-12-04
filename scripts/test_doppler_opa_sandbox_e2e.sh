@@ -263,6 +263,39 @@ run_backend_tests() {
 
     OUTPUT=$(run_veil "${config_file}" python3 "${script_path}/persist_test.py")
     [[ -f "${SANDBOX_DATA}/test.txt" ]] && pass "[${backend}] File persisted to host" || fail "[${backend}] File not persisted"
+
+    # --- Test 7: Environment Variable Stripping ---
+    subheader "Test 7: Env Var Stripping [${backend}]"
+
+    # Set test env vars - some should be stripped, some should pass through
+    OUTPUT=$(VEIL_TEST_API_KEY="secret-key" \
+             VEIL_TEST_TOKEN="secret-token" \
+             VEIL_TEST_SECRET="secret-value" \
+             VEIL_TEST_PASSWORD="secret-pass" \
+             VEIL_TEST_NORMAL="normal-value" \
+             VEIL_TEST_DEBUG="debug-value" \
+             run_veil "${config_file}" python3 "${script_path}/env_strip_test.py")
+    JSON=$(echo "${OUTPUT}" | extract_json)
+
+    # Check that secrets were stripped
+    for var in VEIL_TEST_API_KEY VEIL_TEST_TOKEN VEIL_TEST_SECRET VEIL_TEST_PASSWORD; do
+        visible=$(echo "${JSON}" | jq -r ".stripped.${var} // false")
+        if [[ "${visible}" == "false" ]]; then
+            pass "[${backend}] ${var} stripped"
+        else
+            fail "[${backend}] SECURITY: ${var} leaked to sandbox!"
+        fi
+    done
+
+    # Check that normal vars passed through
+    for var in VEIL_TEST_NORMAL VEIL_TEST_DEBUG PATH HOME; do
+        visible=$(echo "${JSON}" | jq -r ".passed.${var} // false")
+        if [[ "${visible}" == "true" ]]; then
+            pass "[${backend}] ${var} passed through"
+        else
+            fail "[${backend}] ${var} should be visible but was stripped"
+        fi
+    done
 }
 
 # ==============================================================================
@@ -359,6 +392,45 @@ print(json.dumps({
     "CA_CERT": os.path.exists(os.environ.get("SSL_CERT_FILE", "")),
     "DOPPLER_TOKEN": "DOPPLER_TOKEN" in os.environ
 }))
+PYTHON
+
+    # Environment variable stripping test
+    cat > "${SANDBOX_PROJECT}/env_strip_test.py" << 'PYTHON'
+#!/usr/bin/env python3
+import os, json
+
+# Check which env vars are visible
+results = {
+    # These should be STRIPPED (secret-like patterns)
+    "stripped": {
+        "VEIL_TEST_API_KEY": "VEIL_TEST_API_KEY" in os.environ,
+        "VEIL_TEST_TOKEN": "VEIL_TEST_TOKEN" in os.environ,
+        "VEIL_TEST_SECRET": "VEIL_TEST_SECRET" in os.environ,
+        "VEIL_TEST_PASSWORD": "VEIL_TEST_PASSWORD" in os.environ,
+    },
+    # These should PASS THROUGH (non-secret patterns)
+    "passed": {
+        "VEIL_TEST_NORMAL": "VEIL_TEST_NORMAL" in os.environ,
+        "VEIL_TEST_DEBUG": "VEIL_TEST_DEBUG" in os.environ,
+        "PATH": "PATH" in os.environ,
+        "HOME": "HOME" in os.environ,
+    },
+    # Summary
+    "all_secrets_stripped": True,
+    "all_normal_passed": True,
+}
+
+# Check if all secrets were stripped
+for k, visible in results["stripped"].items():
+    if visible:
+        results["all_secrets_stripped"] = False
+
+# Check if all normal vars passed through
+for k, visible in results["passed"].items():
+    if not visible:
+        results["all_normal_passed"] = False
+
+print(json.dumps(results, indent=2))
 PYTHON
 
     # File persistence test

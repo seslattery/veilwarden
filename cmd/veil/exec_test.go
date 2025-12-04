@@ -14,50 +14,109 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBuildProxyEnv_StripsDopplerToken(t *testing.T) {
+func TestBuildProxyEnv_StripsSecrets(t *testing.T) {
 	parentEnv := []string{
 		"DOPPLER_TOKEN=dp.st.dev.secret123",
 		"OPENAI_API_KEY=sk-test",
+		"GITHUB_TOKEN=ghp_test",
+		"AWS_SECRET_ACCESS_KEY=secret",
+		"MY_PASSWORD=hunter2",
 		"PATH=/usr/bin",
 		"HOME=/home/user",
+		"EDITOR=vim",
 	}
 
-	childEnv := buildProxyEnv(parentEnv, "http://localhost:8080", "/tmp/ca.crt")
+	childEnv := buildProxyEnv(parentEnv, "http://localhost:8080", "/tmp/ca.crt", nil)
 
-	// DOPPLER_TOKEN should be stripped
+	// Check what's stripped and what remains
+	envMap := make(map[string]bool)
 	for _, e := range childEnv {
-		if strings.HasPrefix(e, "DOPPLER_TOKEN=") {
-			t.Fatal("DOPPLER_TOKEN should not be in child environment")
+		key := strings.SplitN(e, "=", 2)[0]
+		envMap[key] = true
+	}
+
+	// These should be stripped (secrets)
+	strippedVars := []string{"DOPPLER_TOKEN", "OPENAI_API_KEY", "GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "MY_PASSWORD"}
+	for _, v := range strippedVars {
+		if envMap[v] {
+			t.Errorf("%s should be stripped from child environment", v)
 		}
 	}
 
-	// Other secrets should remain
-	hasOpenAI := false
-	hasPath := false
-	for _, e := range childEnv {
-		if strings.HasPrefix(e, "OPENAI_API_KEY=") {
-			hasOpenAI = true
+	// These should remain (non-secrets)
+	remainingVars := []string{"PATH", "HOME", "EDITOR"}
+	for _, v := range remainingVars {
+		if !envMap[v] {
+			t.Errorf("%s should remain in child environment", v)
 		}
-		if strings.HasPrefix(e, "PATH=") {
-			hasPath = true
-		}
-	}
-	if !hasOpenAI {
-		t.Fatal("OPENAI_API_KEY should remain in child environment")
-	}
-	if !hasPath {
-		t.Fatal("PATH should remain in child environment")
 	}
 
 	// Proxy vars should be added
-	hasHTTPProxy := false
-	for _, e := range childEnv {
-		if strings.HasPrefix(e, "HTTP_PROXY=") {
-			hasHTTPProxy = true
-		}
-	}
-	if !hasHTTPProxy {
+	if !envMap["HTTP_PROXY"] {
 		t.Fatal("HTTP_PROXY should be added to child environment")
+	}
+}
+
+func TestBuildProxyEnv_Passthrough(t *testing.T) {
+	parentEnv := []string{
+		"OPENAI_API_KEY=sk-test",
+		"CUSTOM_TOKEN=my-token",
+		"PATH=/usr/bin",
+	}
+
+	// Allow CUSTOM_TOKEN through via passthrough
+	childEnv := buildProxyEnv(parentEnv, "http://localhost:8080", "/tmp/ca.crt", []string{"CUSTOM_TOKEN"})
+
+	envMap := make(map[string]bool)
+	for _, e := range childEnv {
+		key := strings.SplitN(e, "=", 2)[0]
+		envMap[key] = true
+	}
+
+	// CUSTOM_TOKEN should be allowed through
+	if !envMap["CUSTOM_TOKEN"] {
+		t.Error("CUSTOM_TOKEN should be allowed through via passthrough")
+	}
+
+	// OPENAI_API_KEY should still be stripped (not in passthrough)
+	if envMap["OPENAI_API_KEY"] {
+		t.Error("OPENAI_API_KEY should be stripped")
+	}
+
+	// PATH should remain
+	if !envMap["PATH"] {
+		t.Error("PATH should remain")
+	}
+}
+
+func TestLooksLikeSecret(t *testing.T) {
+	tests := []struct {
+		key      string
+		isSecret bool
+	}{
+		{"OPENAI_API_KEY", true},
+		{"AWS_SECRET_ACCESS_KEY", true},
+		{"GITHUB_TOKEN", true},
+		{"DOPPLER_TOKEN", true},
+		{"MY_PASSWORD", true},
+		{"DB_CREDENTIALS", true},
+		{"PRIVATE_KEY", true},
+		{"AUTH_TOKEN", true},
+		{"PATH", false},
+		{"HOME", false},
+		{"EDITOR", false},
+		{"DEBUG", false},
+		{"NODE_ENV", false},
+		{"GOPATH", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			result := looksLikeSecret(tt.key)
+			if result != tt.isSecret {
+				t.Errorf("looksLikeSecret(%q) = %v, want %v", tt.key, result, tt.isSecret)
+			}
+		})
 	}
 }
 

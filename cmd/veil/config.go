@@ -44,6 +44,7 @@ type veilSandboxEntry struct {
 	AllowedWritePaths []string `yaml:"allowed_write_paths,omitempty"`
 	DeniedReadPaths   []string `yaml:"denied_read_paths,omitempty"`
 	AllowedReadPaths  []string `yaml:"allowed_read_paths,omitempty"`
+	EnvPassthrough    []string `yaml:"env_passthrough,omitempty"`
 }
 
 func loadVeilConfig(path string) (*veilConfig, error) {
