@@ -130,10 +130,3 @@ func TestIsSensitivePath(t *testing.T) {
 		})
 	}
 }
-
-func TestSuggestDeniedReadPaths(t *testing.T) {
-	paths := SuggestDeniedReadPaths()
-	assert.NotEmpty(t, paths)
-	assert.Contains(t, paths, "~/.ssh")
-	assert.Contains(t, paths, "~/.aws")
-}

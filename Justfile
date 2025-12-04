@@ -5,64 +5,30 @@
 default:
     @just --list
 
-# Run all tests (unit + basic E2E)
+# Run all tests
 test:
-    @echo "Running unit and basic E2E tests..."
-    go test -v ./cmd/veilwarden
+    @echo "Running all tests..."
+    go test -v ./...
 
 # Run unit tests only (fast)
 test-unit:
     @echo "Running unit tests..."
-    go test -v -short ./cmd/veilwarden
+    go test -v -short ./...
 
-# Run integration tests (with EnvTest)
-test-integration:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Running integration tests (requires EnvTest)..."
-    # Auto-detect KUBEBUILDER_ASSETS if not set
-    if [ -z "${KUBEBUILDER_ASSETS:-}" ]; then
-        ENVTEST_DIR=$(find "$HOME/Library/Application Support/io.kubebuilder.envtest/k8s" -maxdepth 1 -type d -name "*darwin-arm64" 2>/dev/null | head -1 || true)
-        if [ -n "$ENVTEST_DIR" ]; then
-            echo "✓ Found EnvTest at $ENVTEST_DIR"
-            export KUBEBUILDER_ASSETS="$ENVTEST_DIR"
-        elif [ -d "/usr/local/kubebuilder" ]; then
-            echo "✓ Found EnvTest at /usr/local/kubebuilder"
-            export KUBEBUILDER_ASSETS="/usr/local/kubebuilder"
-        else
-            echo "⚠️  Warning: EnvTest binaries not found"
-            echo "Integration tests requiring K8s API server will be skipped."
-            echo "To install: just install-envtest"
-            echo ""
-        fi
-    fi
-    go test -v -tags=integration ./cmd/veilwarden || echo "⚠️  Some integration tests failed (likely missing EnvTest)"
+# Run veil CLI tests
+test-veil:
+    @echo "Running veil CLI tests..."
+    go test -v ./cmd/veil/...
 
-# Run Kubernetes E2E tests (requires kind cluster and KUBECONFIG)
+# Run sandbox e2e tests (requires DOPPLER_TOKEN and srt)
 test-e2e:
-    @echo "Running Kubernetes E2E tests..."
-    go test -v -tags=e2e -timeout=10m ./cmd/veilwarden
-
-# Run full E2E test suite with kind cluster
-test-k8s-e2e:
-    @echo "Running full Kubernetes E2E test suite with kind cluster..."
-    ./scripts/test_k8s_e2e.sh
-
-# Run all tests (unit + integration + E2E)
-test-all:
-    @echo "Running all test suites..."
-    @just test
-    @echo ""
-    @just test-integration
-    @echo ""
-    @just test-e2e
-    @echo ""
-    @echo "✅ All available tests completed!"
+    @echo "Running sandbox E2E tests..."
+    go test -v -run TestE2ESandbox ./cmd/veil/...
 
 # Run tests with coverage
 test-coverage:
     @echo "Running tests with coverage..."
-    go test -v -coverprofile=coverage.out ./cmd/veilwarden
+    go test -v -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
     @echo "Coverage report generated: coverage.html"
 
@@ -80,10 +46,6 @@ vuln-check:
 check: lint vuln-check test
     @echo "✅ All checks passed!"
 
-# Run all checks including integration tests
-check-all: lint vuln-check test-all
-    @echo "✅ All checks passed!"
-
 # Format code
 fmt:
     @echo "Formatting code..."
@@ -95,35 +57,23 @@ tidy:
     @echo "Tidying dependencies..."
     go mod tidy
 
-# Build binary
+# Build veil CLI
 build:
-    @echo "Building veilwarden..."
+    @echo "Building veil..."
     @mkdir -p bin
-    go build -o bin/veilwarden ./cmd/veilwarden
-    @echo "✅ Binary built: bin/veilwarden"
+    go build -o bin/veil ./cmd/veil
+    @echo "✅ Binary built: bin/veil"
 
-# Build Docker image
-docker-build:
-    @echo "Building Docker image..."
-    docker build -t veilwarden:latest .
+# Build echo server (for testing)
+build-echo:
+    @echo "Building echo server..."
+    @mkdir -p bin
+    go build -o bin/echo ./cmd/echo
+    @echo "✅ Binary built: bin/echo"
 
-# Run locally with example config
-run:
-    @echo "Running veilwarden locally..."
-    @if [ -z "$VEILWARDEN_SESSION_SECRET" ]; then \
-        export VEILWARDEN_SESSION_SECRET="$$(openssl rand -hex 16)"; \
-        echo "Generated session secret: $$VEILWARDEN_SESSION_SECRET"; \
-    fi
-    go run ./cmd/veilwarden --config examples/veilwarden-local-dev.yaml
-
-# Run with Doppler integration
-run-doppler:
-    @echo "Running veilwarden with Doppler..."
-    @if [ -z "$DOPPLER_TOKEN" ]; then \
-        echo "Error: DOPPLER_TOKEN not set"; \
-        exit 1; \
-    fi
-    go run ./cmd/veilwarden --config test-config.yaml
+# Build all binaries
+build-all: build build-echo
+    @echo "✅ All binaries built"
 
 # Clean build artifacts
 clean:
@@ -147,36 +97,14 @@ install-deps:
     else \
         echo "govulncheck already installed"; \
     fi
-    @echo "Installing kind..."
-    @if ! command -v kind &> /dev/null; then \
-        go install sigs.k8s.io/kind@latest; \
-    else \
-        echo "kind already installed"; \
-    fi
     @echo "✅ All development dependencies installed"
-    @echo ""
-    @echo "Note: EnvTest binaries not installed (optional for integration tests)"
-    @echo "To install EnvTest: just install-envtest"
-
-# Install EnvTest binaries for integration tests
-install-envtest:
-    @echo "Installing EnvTest binaries..."
-    @if [ -d "/usr/local/kubebuilder" ]; then \
-        echo "EnvTest already installed at /usr/local/kubebuilder"; \
-    else \
-        go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest; \
-        setup-envtest use -p path; \
-        echo ""; \
-        echo "⚠️  Note: You may need to manually set KUBEBUILDER_ASSETS"; \
-        echo "Run: export KUBEBUILDER_ASSETS=\$$(setup-envtest use -p path)"; \
-    fi
 
 # Setup development environment
 setup: install-deps tidy
     @echo "✅ Development environment ready"
 
 # CI pipeline (what CI should run)
-ci: lint vuln-check test test-integration
+ci: lint vuln-check test
     @echo "✅ CI checks passed!"
 
 # Local development workflow

@@ -134,7 +134,7 @@ sandbox:
 	}
 
 	// Create test scripts in project dir
-	createTestScripts(t, projectDir, dataDir, echoAddr)
+	createTestScripts(t, projectDir, dataDir)
 
 	// Run tests
 	t.Run("SandboxEnvironment", func(t *testing.T) {
@@ -365,7 +365,7 @@ func testFilePersistence(t *testing.T, runVeil func(...string) (string, error), 
 }
 
 // createTestScripts creates the Python test scripts in the project directory
-func createTestScripts(t *testing.T, projectDir, dataDir, echoAddr string) {
+func createTestScripts(t *testing.T, projectDir, dataDir string) {
 	t.Helper()
 
 	scripts := map[string]string{

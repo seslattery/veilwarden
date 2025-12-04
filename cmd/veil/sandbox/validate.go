@@ -59,29 +59,12 @@ func WarnSensitiveWritePaths(paths []string) {
 
 // isSensitivePath returns true if the path is a sensitive system directory
 func isSensitivePath(path string) bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "/nonexistent" // Fallback if can't get home
-	}
-
-	sensitive := []string{
-		filepath.Join(home, ".ssh"),
-		filepath.Join(home, ".aws"),
-		filepath.Join(home, ".config", "gcloud"),
-		filepath.Join(home, ".azure"),
-		filepath.Join(home, ".doppler"),
-		filepath.Join(home, ".gnupg"),
-		filepath.Join(home, ".kube"),
-		filepath.Join(home, ".docker"),
-		"/etc/passwd",
-		"/etc/shadow",
-		"/etc/sudoers",
-	}
-
 	// Expand path for comparison
 	expanded := expandPath(path)
 
-	for _, s := range sensitive {
+	// Use the same list as DefaultDeniedReadPaths, expanded for comparison
+	for _, p := range DefaultDeniedReadPaths() {
+		s := expandPath(p)
 		// Check if path equals or is subdirectory of sensitive path
 		if expanded == s || strings.HasPrefix(expanded, s+string(filepath.Separator)) {
 			return true
@@ -94,9 +77,4 @@ func isSensitivePath(path string) bool {
 	}
 
 	return false
-}
-
-// SuggestDeniedReadPaths returns suggested paths to deny reading based on common sensitive locations
-func SuggestDeniedReadPaths() []string {
-	return DefaultDeniedReadPaths()
 }

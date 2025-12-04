@@ -109,6 +109,7 @@ func DefaultDeniedReadPaths() []string {
 		"~/.gnupg",
 		"~/.kube",
 		"~/.docker",
+		"/etc/passwd",
 		"/etc/shadow",
 		"/etc/sudoers",
 	}

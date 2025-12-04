@@ -11,10 +11,10 @@ import (
 
 // Simplified config types for veil CLI
 type veilConfig struct {
-	Routes  []veilRouteEntry   `yaml:"routes"`
-	Policy  *veilPolicyEntry   `yaml:"policy,omitempty"`
-	Doppler *veilDopplerEntry  `yaml:"doppler,omitempty"`
-	Sandbox *veilSandboxEntry  `yaml:"sandbox,omitempty"`
+	Routes  []veilRouteEntry  `yaml:"routes"`
+	Policy  *veilPolicyEntry  `yaml:"policy,omitempty"`
+	Doppler *veilDopplerEntry `yaml:"doppler,omitempty"`
+	Sandbox *veilSandboxEntry `yaml:"sandbox,omitempty"`
 }
 
 type veilRouteEntry struct {
@@ -25,11 +25,9 @@ type veilRouteEntry struct {
 }
 
 type veilPolicyEntry struct {
-	Enabled         bool   `yaml:"enabled"`
-	Engine          string `yaml:"engine"`
-	PolicyPath      string `yaml:"policy_path"`
-	DecisionPath    string `yaml:"decision_path"`
-	DefaultDecision string `yaml:"default_decision"` // "allow" or "deny"
+	Engine       string `yaml:"engine"`
+	PolicyPath   string `yaml:"policy_path"`
+	DecisionPath string `yaml:"decision_path"`
 }
 
 type veilDopplerEntry struct {
@@ -49,7 +47,7 @@ type veilSandboxEntry struct {
 
 func loadVeilConfig(path string) (*veilConfig, error) {
 	// Expand home directory
-	if len(path) > 0 && path[0] == '~' {
+	if path != "" && path[0] == '~' {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			path = strings.Replace(path, "~", home, 1)

@@ -1,14 +1,26 @@
 # Veilwarden
 
-## EXPERIMENTAL USE ONLY
+**Your AI agents shouldn't know your API keys.**
 
-**Stop putting API keys in your code. Start using zero-trust egress for AI agents and services.**
+Veilwarden is a local proxy that injects secrets into outbound HTTP requests. Your code never sees credentials - they're added transparently at the network layer.
 
-Veilwarden is a self-hosted HTTP proxy that injects API secrets into outbound requests so your applications and AI agents never handle credentials directly.
+```
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│  Your Agent │ ──── │  Veilwarden │ ──── │  OpenAI API │
+│  (no keys)  │      │  (injects)  │      │             │
+└─────────────┘      └─────────────┘      └─────────────┘
+```
+
+**Why?**
+- Secrets can't leak from agent code that never has them
+- Centralize credential management across all your agents
+- Add policy controls (OPA) and sandboxing without changing agent code
+
+> **Status:** Experimental - expect breaking changes
 
 ---
 
-## Quick Start (Laptop Mode)
+## Quick Start
 
 ```bash
 # Install
@@ -17,314 +29,141 @@ go install github.com/yourusername/veilwarden/cmd/veil@latest
 # Initialize config
 veil init
 
-# Set API keys in environment (or use Doppler)
+# Set your API keys
 export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Run your AI agent through the proxy
+# Run any command through the proxy
 veil exec -- python my_agent.py
-
-# Your agent code stays clean - no API keys!
+veil exec -- curl https://api.openai.com/v1/models
 ```
 
-The `veil exec` command starts a local MITM proxy, injects environment variables (HTTP_PROXY, CA certs), and runs your command. All HTTPS requests are intercepted and API keys are injected transparently.
+Your agent makes normal HTTP requests. Veilwarden intercepts them and adds the appropriate `Authorization` header based on the destination host.
 
 ---
 
-## Secret Management
+## Configuration
 
-### Option 1: Environment Variables (Default)
+Config lives at `~/.veilwarden/config.yaml`. Run `veil init` to create it.
 
-Secrets are loaded from environment variables based on the `secret_id` in your routes:
+### Routes (Required)
+
+Map hosts to secrets:
+
+```yaml
+routes:
+  - host: api.openai.com
+    secret_id: OPENAI_API_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+
+  - host: api.anthropic.com
+    secret_id: ANTHROPIC_API_KEY
+    header_name: x-api-key
+    header_value_template: "{{secret}}"
+```
+
+### Secrets
+
+**Option A: Environment variables** (default)
+
+Secrets are read from env vars matching `secret_id`:
 
 ```bash
 export OPENAI_API_KEY=sk-...
-export ANTHROPIC_API_KEY=sk-ant-...
-veil exec -- python my_agent.py
+veil exec -- python agent.py
 ```
 
-### Option 2: Doppler Integration
+**Option B: Doppler**
 
-For centralized secret management, configure Doppler in your `~/.veilwarden/config.yaml`:
+For centralized secret management:
 
 ```yaml
 doppler:
   project: my-project
-  config: dev           # e.g., dev, staging, prod
-  cache_ttl: 5m        # Optional, default 5m
+  config: dev
 ```
-
-Then set your Doppler token:
 
 ```bash
-export DOPPLER_TOKEN=dp.st.dev.xxxxx
-veil exec -- python my_agent.py
+export DOPPLER_TOKEN=dp.st.xxx
+veil exec -- python agent.py
 ```
 
-**Benefits:**
-- Secrets never touch your local environment
-- Automatic secret rotation from Doppler
-- Centralized secret management across teams
-- Per-environment configuration (dev, staging, prod)
+If Doppler is configured but `DOPPLER_TOKEN` isn't set, falls back to env vars.
 
-**Fallback**: If Doppler is configured but `DOPPLER_TOKEN` is not set, veil automatically falls back to environment variables.
+### Policy (Optional)
 
----
-
-## Policy Configuration
-
-Control which requests are allowed using OPA policies. Example `~/.veilwarden/config.yaml`:
+Control which requests are allowed using [OPA](https://www.openpolicyagent.org/):
 
 ```yaml
 policy:
   engine: opa
-  bundle_path: ~/.veilwarden/policies
+  policy_path: ~/.veilwarden/policies
   decision_path: veilwarden/authz/allow
 ```
 
-Example policy (`~/.veilwarden/policies/policy.rego`):
+See `policies/example.rego` for policy examples.
 
-```rego
-package veilwarden.authz
+### Sandbox (Optional)
 
-import rego.v1
-
-default allow := false
-
-# Allow GET /allowed
-allow if {
-    input.method == "GET"
-    startswith(input.path, "/allowed")
-}
-
-# Allow POST to /api/*
-allow if {
-    input.method == "POST"
-    startswith(input.path, "/api/")
-}
-```
-
-See [OPA Integration Documentation](docs/opa-integration.md) for detailed examples.
-
----
-
-## Sandbox Configuration (Optional)
-
-Run agents in isolated sandboxes to prevent unauthorized filesystem access.
-
-### Requirements
-
-Install Anthropic's sandbox CLI:
-
-```bash
-# Visit: https://github.com/anthropics/sandbox
-# Follow installation instructions for your platform
-# Verify installation:
-anthropic-sandbox --version
-```
-
-### Configuration
-
-Add to `~/.veilwarden/config.yaml`:
+Run agents in an isolated filesystem sandbox:
 
 ```yaml
 sandbox:
   enabled: true
   backend: anthropic
-  working_dir: /workspace
-
-  mounts:
-    # Project directory (read-write)
-    - host: ./project
-      container: /workspace
-      readonly: false
-
-    # Persistent agent data (read-write)
-    - host: ~/.cache/agent-data
-      container: /data
-      readonly: false
+  allowed_write_paths: [./project, /tmp]
+  denied_read_paths: [~/.ssh, ~/.aws]
 ```
 
-See `examples/veil-sandbox-config.yaml` for a comprehensive configuration example.
+Requires [srt](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime): `npm install -g @anthropic-ai/sandbox-runtime`
 
-### Usage
+See [Sandbox Quickstart](docs/sandbox-quickstart.md) for details.
+
+---
+
+## CLI Reference
 
 ```bash
-# Run with sandbox (respects config)
-veil exec -- python agent.py
-
-# Force enable sandbox
-veil exec --sandbox -- python agent.py
-
-# Force disable sandbox
-veil exec --no-sandbox -- python agent.py
-
-# Verbose output (see sandbox status)
-veil exec --verbose -- python agent.py
-```
-
-### Security Model
-
-**What sandbox protects:**
-- Prevents reading sensitive files (`~/.ssh/`, `~/.aws/`, etc.) unless explicitly mounted
-- Prevents writing to system directories
-- Isolates filesystem (only mounted directories accessible)
-- All unmounted paths return "file not found"
-
-**What sandbox does NOT protect:**
-- Network access (still goes through veil proxy with OPA policies)
-- Resource exhaustion (depends on backend limits)
-- Kernel exploits (depends on backend isolation mechanism)
-
-**Best practices:**
-- Only mount directories the agent actually needs
-- Use `readonly: true` for directories agent shouldn't modify
-- Never mount sensitive directories (`~/.ssh/`, `~/.aws/`, `/etc/`)
-- Always configure OPA policies to control network access
-- Review mount configuration regularly
-
-See [Sandbox Design](docs/plans/2025-11-21-sandbox-integration-design.md) for architecture details.
-
----
-
-## Server Mode (Kubernetes)
-
-Deploy Veilwarden as a DaemonSet for Kubernetes workloads:
-
-```yaml
-# veilwarden.yaml
-secrets:
-  - id: openai-key
-    value: sk-your-openai-api-key
-
-routes:
-  - upstream_host: api.openai.com
-    upstream_scheme: https
-    secret_id: openai-key
-    inject_header: Authorization
-    header_value_template: "Bearer {{secret}}"
-```
-
-Run the server:
-
-```bash
-export VEILWARDEN_SESSION_SECRET="$(openssl rand -hex 16)"
-go run ./cmd/veilwarden --config veilwarden.yaml
-```
-
-Your application routes requests through Veilwarden:
-
-```python
-import os
-import requests
-
-PROXY_URL = "http://127.0.0.1:8088"
-SESSION_SECRET = os.getenv("VEILWARDEN_SESSION_SECRET")
-
-def call_openai(prompt: str):
-    return requests.post(
-        f"{PROXY_URL}/v1/chat/completions",
-        headers={
-            "X-Session-Secret": SESSION_SECRET,
-            "X-Upstream-Host": "api.openai.com",
-            "Content-Type": "application/json",
-        },
-        json={
-            "model": "gpt-4o-mini",
-            "messages": [{"role": "user", "content": prompt}],
-        },
-    )
-
-print(call_openai("Hello!").json())
+veil init                        # Create default config
+veil exec -- <command>           # Run command through proxy
+veil exec --sandbox -- <cmd>     # Force sandbox on
+veil exec --no-sandbox -- <cmd>  # Force sandbox off
+veil exec --verbose -- <cmd>     # Show proxy logs
 ```
 
 ---
 
-## Security Notes
+## Security Model
 
-**Current Limitations:**
+**What Veilwarden provides:**
+- Secrets injected at network layer, not in application code
+- Optional sandbox prevents filesystem access to `~/.ssh`, `~/.aws`, etc.
+- Optional OPA policies for fine-grained request control
+- `DOPPLER_TOKEN` stripped from child process environment
 
-1. **Environment Variable Handling**: Only `DOPPLER_TOKEN` is stripped from the child process environment. Other secrets remain visible if exported. Use Doppler integration instead of exporting secrets to your shell.
+**Limitations:**
+- Other exported env vars are visible to child processes
+- Sandbox is experimental (Anthropic srt backend only)
+- Policy defaults to allow-all for compatibility
 
-2. **Policy Enforcement**: Policies default to allow-all for backward compatibility. Always configure `policy.engine: opa` or `policy.engine: config` for production.
-
-3. **Sandbox Mode**: Experimental. Requires `anthropic-sandbox` CLI to be installed. Only Anthropic backend currently supported. See "Sandbox Configuration" section above.
-
-**Best Practices:**
-
-- Use Doppler integration instead of exporting secrets to your shell
-- Always configure policy enforcement for production workloads
-- Review the [Security Design](docs/plans/2025-11-19-security-fixes-design.md) for threat model details
-
----
-
-## Features
-
-- **AI Agent-First Design**: Local & K8s patterns to keep agents credential-free
-- **Kubernetes Service Account Authentication**: Workloads authenticate using native K8s identities
-- **OPA Policy Engine**: Fine-grained access control (per identity/path/method)
-- **Doppler Integration**: Fetch secrets from Doppler with automatic caching
-- **Secret Injection**: Inject secrets into HTTP headers
-- **Multiple Upstream Routes**: Configure many third-party APIs with different secrets
-- **Automatic Secret Caching**: In-memory cache with configurable TTL (default 5m)
-- **Structured Logging**: Logs include request IDs and metadata (never secrets)
-
----
-
-## Documentation
-
-- **[OPA Integration](docs/opa-integration.md)** - Complete OPA policy guide with examples
-- **[Kubernetes Deployment Guide](docs/kubernetes-workload-identity.md)** - Complete K8s setup
-- **[Doppler Integration](examples/doppler-config.yaml)** - Configuration examples
-- **[Development Scripts](scripts/)** - Helper scripts for local testing
+See [SECURITY.md](docs/SECURITY.md) for threat model details.
 
 ---
 
 ## Development
 
-**Prerequisites:**
-
-- Go 1.25+
-- [just](https://github.com/casey/just) command runner (optional but recommended)
-- Docker (for building images and E2E tests)
-
-### Quick Setup
-
 ```bash
-# Install development dependencies
+# Setup
 just setup
 
-# Run tests
-just test              # Unit and basic E2E tests
-just test-all          # All tests including integration
-
-# Code quality
-just lint              # Run golangci-lint
-just check             # Lint + vuln + test
+# Test
+just test          # All tests
+just test-veil     # CLI tests only
+just test-e2e      # E2E tests (requires DOPPLER_TOKEN + srt)
 
 # Build
-just build             # Build binary to bin/veilwarden
-just docker-build      # Build Docker image
-
-# Run locally
-just run               # Run with example config
-just run-doppler       # Run with Doppler integration
+just build         # Output: bin/veil
 ```
 
-### Manual Testing
-
-```bash
-# Basic local echo server demo
-./scripts/test_local.sh
-
-# Doppler integration demo
-export DOPPLER_TOKEN=dp.st.***
-./scripts/test_local_with_doppler.sh
-
-# Full Doppler + OPA demo
-./scripts/test_local_with_doppler_and_opa.sh
-```
-
----
-
-**Status:** Experimental MVP – expect breaking changes as features evolve.
+Prerequisites: Go 1.21+, [just](https://github.com/casey/just) (optional)

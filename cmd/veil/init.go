@@ -103,12 +103,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 	configDir := expandHomeDir(initConfigDir)
 
 	// Create directory structure
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
 	policiesDir := filepath.Join(configDir, "policies")
-	if err := os.MkdirAll(policiesDir, 0755); err != nil {
+	if err := os.MkdirAll(policiesDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create policies directory: %w", err)
 	}
 
@@ -137,7 +137,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 }
 
 func expandHomeDir(path string) string {
-	if len(path) > 0 && path[0] == '~' {
+	if path != "" && path[0] == '~' {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			path = filepath.Join(home, path[1:])
@@ -146,13 +146,13 @@ func expandHomeDir(path string) string {
 	return path
 }
 
-func writeFileIfNotExists(path string, content string) error {
+func writeFileIfNotExists(path, content string) error {
 	if _, err := os.Stat(path); err == nil {
 		fmt.Printf("⊘ Skipped (already exists): %s\n", path)
 		return nil
 	}
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", path, err)
 	}
 

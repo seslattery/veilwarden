@@ -224,7 +224,7 @@ func (a *AnthropicBackend) createSettingsFile(cfg *Config) (string, error) {
 
 // expandPath expands ~ to home directory
 func expandPath(path string) string {
-	if len(path) == 0 {
+	if path == "" {
 		return path
 	}
 

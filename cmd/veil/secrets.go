@@ -15,10 +15,11 @@ import (
 // - If cfg.Doppler exists AND DOPPLER_TOKEN env var is set:
 //   - Parse cache TTL (default to 5 minutes if not set)
 //   - Create doppler.NewStore() with options from config
+//
 // - Else:
 //   - Load secrets from environment based on routes (existing logic from exec.go)
 //   - Return proxy.NewMemorySecretStore(secrets)
-func buildSecretStore(ctx context.Context, cfg *veilConfig) (proxy.SecretStore, error) {
+func buildSecretStore(_ context.Context, cfg *veilConfig) (proxy.SecretStore, error) {
 	// Check if Doppler is configured and token is available
 	dopplerToken := os.Getenv("DOPPLER_TOKEN")
 	if cfg.Doppler != nil && dopplerToken != "" {

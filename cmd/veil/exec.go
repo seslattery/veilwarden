@@ -15,27 +15,27 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/cobra"
 	"veilwarden/cmd/veil/mitm"
 	"veilwarden/cmd/veil/sandbox"
 	"veilwarden/internal/policy/opa"
 	"veilwarden/internal/proxy"
+
+	"github.com/spf13/cobra"
 )
 
 // shouldUseSandbox determines if sandbox should be used based on config and flags
 func shouldUseSandbox(cfg *veilConfig, cmd *cobra.Command) bool {
 	// --no-sandbox flag takes precedence
-	if cmd.Flags().Changed("no-sandbox") {
-		noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
-		if noSandbox {
-			return false
-		}
+	if noSandbox, err := cmd.Flags().GetBool("no-sandbox"); err == nil && noSandbox {
+		return false
 	}
 
 	// --sandbox flag overrides config
 	if cmd.Flags().Changed("sandbox") {
-		sandbox, _ := cmd.Flags().GetBool("sandbox")
-		return sandbox
+		sandboxFlag, err := cmd.Flags().GetBool("sandbox")
+		if err == nil {
+			return sandboxFlag
+		}
 	}
 
 	// Default to config
@@ -180,7 +180,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to find available port: %w", err)
 		}
 		proxyPort = listener.Addr().(*net.TCPAddr).Port
-		listener.Close()
+		_ = listener.Close() // Error intentionally ignored - we're just releasing the port
 	}
 
 	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
@@ -292,13 +292,13 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 		"https_proxy="+proxyURL,
 
 		// CA certificate paths for various tools
-		"REQUESTS_CA_BUNDLE="+caCertPath,   // Python requests
-		"SSL_CERT_FILE="+caCertPath,        // Go, curl
-		"NODE_EXTRA_CA_CERTS="+caCertPath,  // Node.js
-		"CURL_CA_BUNDLE="+caCertPath,       // curl (alternate)
-		"PIP_CERT="+caCertPath,             // pip
-		"HTTPLIB2_CA_CERTS="+caCertPath,    // Python httplib2
-		"AWS_CA_BUNDLE="+caCertPath,        // AWS CLI
+		"REQUESTS_CA_BUNDLE="+caCertPath,  // Python requests
+		"SSL_CERT_FILE="+caCertPath,       // Go, curl
+		"NODE_EXTRA_CA_CERTS="+caCertPath, // Node.js
+		"CURL_CA_BUNDLE="+caCertPath,      // curl (alternate)
+		"PIP_CERT="+caCertPath,            // pip
+		"HTTPLIB2_CA_CERTS="+caCertPath,   // Python httplib2
+		"AWS_CA_BUNDLE="+caCertPath,       // AWS CLI
 
 		// VeilWarden-specific
 		"VEILWARDEN_PROXY_URL="+proxyURL,
@@ -308,7 +308,7 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 }
 
 // runSandboxed executes the command in a sandbox with network isolation
-func runSandboxed(ctx context.Context, backend sandbox.Backend, cfg *veilConfig, args []string, env []string, proxyAddr, caCertPath string) error {
+func runSandboxed(ctx context.Context, backend sandbox.Backend, cfg *veilConfig, args, env []string, proxyAddr, caCertPath string) error {
 	// Extract allowed hosts from routes - needed for srt domain filtering
 	var allowedHosts []string
 	for _, route := range cfg.Routes {

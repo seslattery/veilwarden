@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"veilwarden/internal/proxy"
+
+	"github.com/spf13/cobra"
 )
 
 func TestBuildProxyEnv_StripsDopplerToken(t *testing.T) {
