@@ -1,4 +1,3 @@
-````md
 ![veilwarden](https://github.com/user-attachments/assets/a943fe76-1e34-48b7-80f1-89b48cedd593)
 
 # Veilwarden
@@ -347,6 +346,3 @@ Prerequisites:
 
 * Go 1.21+
 * [`just`](https://github.com/casey/just) (optional but recommended)
-
-```
-```
