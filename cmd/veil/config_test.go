@@ -293,13 +293,12 @@ sandbox:
   enabled: true
   backend: anthropic
   working_dir: /workspace
-  mounts:
-    - host: ./project
-      container: /workspace
-      readonly: false
-    - host: ~/.cache/data
-      container: /data
-      readonly: true
+  allowed_write_paths:
+    - /workspace
+    - /tmp/data
+  denied_read_paths:
+    - ~/.ssh
+    - ~/.aws
 `
 
 	// Write temp config file
@@ -318,16 +317,14 @@ sandbox:
 	assert.Equal(t, "anthropic", cfg.Sandbox.Backend)
 	assert.Equal(t, "/workspace", cfg.Sandbox.WorkingDir)
 
-	// Verify mounts
-	require.Len(t, cfg.Sandbox.Mounts, 2)
+	// Verify path lists
+	require.Len(t, cfg.Sandbox.AllowedWritePaths, 2)
+	assert.Equal(t, "/workspace", cfg.Sandbox.AllowedWritePaths[0])
+	assert.Equal(t, "/tmp/data", cfg.Sandbox.AllowedWritePaths[1])
 
-	assert.Equal(t, "./project", cfg.Sandbox.Mounts[0].HostPath)
-	assert.Equal(t, "/workspace", cfg.Sandbox.Mounts[0].ContainerPath)
-	assert.False(t, cfg.Sandbox.Mounts[0].ReadOnly)
-
-	assert.Equal(t, "~/.cache/data", cfg.Sandbox.Mounts[1].HostPath)
-	assert.Equal(t, "/data", cfg.Sandbox.Mounts[1].ContainerPath)
-	assert.True(t, cfg.Sandbox.Mounts[1].ReadOnly)
+	require.Len(t, cfg.Sandbox.DeniedReadPaths, 2)
+	assert.Equal(t, "~/.ssh", cfg.Sandbox.DeniedReadPaths[0])
+	assert.Equal(t, "~/.aws", cfg.Sandbox.DeniedReadPaths[1])
 }
 
 func TestLoadVeilConfig_WithoutSandbox(t *testing.T) {
@@ -362,7 +359,6 @@ func TestLoadVeilConfig_SandboxValidation(t *testing.T) {
 			yaml: `
 sandbox:
   enabled: true
-  mounts: []
 `,
 			wantErr: "sandbox.backend is required",
 		},
@@ -372,33 +368,8 @@ sandbox:
 sandbox:
   enabled: true
   backend: invalid-backend
-  mounts: []
 `,
 			wantErr: "unknown sandbox backend",
-		},
-		{
-			name: "mount missing host path",
-			yaml: `
-sandbox:
-  enabled: true
-  backend: anthropic
-  mounts:
-    - container: /workspace
-      readonly: false
-`,
-			wantErr: "mount host path is required",
-		},
-		{
-			name: "mount missing container path",
-			yaml: `
-sandbox:
-  enabled: true
-  backend: anthropic
-  mounts:
-    - host: ./project
-      readonly: false
-`,
-			wantErr: "mount container path is required",
 		},
 	}
 

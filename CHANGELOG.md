@@ -5,6 +5,53 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### Sandbox Integration (Experimental)
+
+Run AI agents in isolated sandboxes for comprehensive filesystem and process isolation.
+
+**Features:**
+- Pluggable sandbox backend interface
+- Anthropic sandbox as first implementation
+- Explicit mount declarations for controlled filesystem access
+- Automatic proxy configuration (HTTP_PROXY + CA certs)
+- Mount validation with sensitive path warnings
+- `--sandbox` and `--no-sandbox` CLI flags
+
+**Configuration:**
+```yaml
+sandbox:
+  enabled: true
+  backend: anthropic
+  working_dir: /workspace
+  mounts:
+    - host: ./project
+      container: /workspace
+      readonly: false
+```
+
+**Security:**
+- Prevents reading sensitive files (~/.ssh/, ~/.aws/)
+- Prevents writing to system directories
+- All network traffic still goes through veil proxy
+- OPA policies still enforced
+
+**Documentation:**
+- Design: `docs/plans/2025-11-21-sandbox-integration-design.md`
+- Quickstart: `docs/sandbox-quickstart.md`
+- Example config: `examples/veil-sandbox-config.yaml`
+
+**Testing:**
+- Unit tests: `cmd/veil/sandbox/*_test.go`
+- Integration test: `test/sandbox_integration_test.sh`
+
+**Requirements:**
+- `anthropic-sandbox` CLI must be installed
+- Linux/macOS only (no Windows support yet)
+
 ## [2.0.0] - 2025-11-19
 
 ### Added

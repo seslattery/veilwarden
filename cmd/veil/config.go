@@ -39,16 +39,12 @@ type veilDopplerEntry struct {
 }
 
 type veilSandboxEntry struct {
-	Enabled    bool             `yaml:"enabled"`
-	Backend    string           `yaml:"backend"`
-	WorkingDir string           `yaml:"working_dir,omitempty"`
-	Mounts     []veilMountEntry `yaml:"mounts,omitempty"`
-}
-
-type veilMountEntry struct {
-	HostPath      string `yaml:"host"`
-	ContainerPath string `yaml:"container"`
-	ReadOnly      bool   `yaml:"readonly"`
+	Enabled           bool     `yaml:"enabled"`
+	Backend           string   `yaml:"backend"`
+	WorkingDir        string   `yaml:"working_dir,omitempty"`
+	AllowedWritePaths []string `yaml:"allowed_write_paths,omitempty"`
+	DeniedReadPaths   []string `yaml:"denied_read_paths,omitempty"`
+	AllowedReadPaths  []string `yaml:"allowed_read_paths,omitempty"`
 }
 
 func loadVeilConfig(path string) (*veilConfig, error) {
@@ -100,16 +96,6 @@ func loadVeilConfig(path string) (*veilConfig, error) {
 		}
 		if !validBackends[cfg.Sandbox.Backend] {
 			return nil, fmt.Errorf("unknown sandbox backend: %s (available: anthropic)", cfg.Sandbox.Backend)
-		}
-
-		// Validate mounts
-		for i, mount := range cfg.Sandbox.Mounts {
-			if mount.HostPath == "" {
-				return nil, fmt.Errorf("sandbox.mounts[%d]: mount host path is required", i)
-			}
-			if mount.ContainerPath == "" {
-				return nil, fmt.Errorf("sandbox.mounts[%d]: mount container path is required", i)
-			}
 		}
 	}
 

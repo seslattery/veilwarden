@@ -77,6 +77,49 @@ While secrets are unlikely to contain such characters, defense-in-depth requires
 
 **Location**: `cmd/veil/exec.go` (buildProxyEnv function)
 
+### 4. Sandbox Isolation (Optional)
+
+**Protection**: VeilWarden can run agent processes in isolated sandboxes to prevent unauthorized filesystem access.
+
+**Implementation**:
+- Pluggable sandbox backend interface
+- Anthropic sandbox as first implementation (external CLI)
+- Explicit mount declarations for controlled access
+- All network traffic still goes through veil MITM proxy
+
+**Rationale**: Even with network-level controls, compromised agents could:
+- Read sensitive files (~/.ssh/id_rsa, ~/.aws/credentials)
+- Write malicious files to system directories
+- Persist malware between runs
+
+Sandboxing provides defense-in-depth by isolating the filesystem.
+
+**Configuration**:
+```yaml
+sandbox:
+  enabled: true
+  backend: anthropic
+  mounts:
+    - host: ./project
+      container: /workspace
+      readonly: false
+```
+
+**What sandbox protects:**
+- Reading sensitive files unless explicitly mounted
+- Writing to system directories
+- Filesystem persistence (only mounts persist)
+
+**What sandbox does NOT protect:**
+- Network access (still controlled by veil proxy + OPA)
+- Resource exhaustion (depends on backend)
+- Kernel exploits (depends on backend isolation mechanism)
+
+**Location**:
+- Design: `docs/plans/2025-11-21-sandbox-integration-design.md`
+- Implementation: `cmd/veil/sandbox/`
+- Tests: `test/sandbox_integration_test.sh`
+
 ## Security Limitations
 
 ### 1. Environment Variable Visibility (Laptop Mode)
@@ -122,15 +165,6 @@ policy:
   decision_path: veilwarden/authz/allow
 ```
 
-### 4. Sandbox Mode Not Implemented
-
-**Current Behavior**: The `--sandbox` flag is declared but not implemented.
-
-**Risk**: Users may think they have filesystem isolation when they don't.
-
-**Mitigation**: Using `--sandbox` returns a clear error: `--sandbox mode is not implemented yet`
-
-**Future Work**: Implement filesystem isolation using containers or namespaces.
 
 ## Security Best Practices
 

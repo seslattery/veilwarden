@@ -108,6 +108,85 @@ See [OPA Integration Documentation](docs/opa-integration.md) for detailed exampl
 
 ---
 
+## Sandbox Configuration (Optional)
+
+Run agents in isolated sandboxes to prevent unauthorized filesystem access.
+
+### Requirements
+
+Install Anthropic's sandbox CLI:
+
+```bash
+# Visit: https://github.com/anthropics/sandbox
+# Follow installation instructions for your platform
+# Verify installation:
+anthropic-sandbox --version
+```
+
+### Configuration
+
+Add to `~/.veilwarden/config.yaml`:
+
+```yaml
+sandbox:
+  enabled: true
+  backend: anthropic
+  working_dir: /workspace
+
+  mounts:
+    # Project directory (read-write)
+    - host: ./project
+      container: /workspace
+      readonly: false
+
+    # Persistent agent data (read-write)
+    - host: ~/.cache/agent-data
+      container: /data
+      readonly: false
+```
+
+See `examples/veil-sandbox-config.yaml` for a comprehensive configuration example.
+
+### Usage
+
+```bash
+# Run with sandbox (respects config)
+veil exec -- python agent.py
+
+# Force enable sandbox
+veil exec --sandbox -- python agent.py
+
+# Force disable sandbox
+veil exec --no-sandbox -- python agent.py
+
+# Verbose output (see sandbox status)
+veil exec --verbose -- python agent.py
+```
+
+### Security Model
+
+**What sandbox protects:**
+- Prevents reading sensitive files (`~/.ssh/`, `~/.aws/`, etc.) unless explicitly mounted
+- Prevents writing to system directories
+- Isolates filesystem (only mounted directories accessible)
+- All unmounted paths return "file not found"
+
+**What sandbox does NOT protect:**
+- Network access (still goes through veil proxy with OPA policies)
+- Resource exhaustion (depends on backend limits)
+- Kernel exploits (depends on backend isolation mechanism)
+
+**Best practices:**
+- Only mount directories the agent actually needs
+- Use `readonly: true` for directories agent shouldn't modify
+- Never mount sensitive directories (`~/.ssh/`, `~/.aws/`, `/etc/`)
+- Always configure OPA policies to control network access
+- Review mount configuration regularly
+
+See [Sandbox Design](docs/plans/2025-11-21-sandbox-integration-design.md) for architecture details.
+
+---
+
 ## Server Mode (Kubernetes)
 
 Deploy Veilwarden as a DaemonSet for Kubernetes workloads:
@@ -169,7 +248,7 @@ print(call_openai("Hello!").json())
 
 2. **Policy Enforcement**: Policies default to allow-all for backward compatibility. Always configure `policy.engine: opa` or `policy.engine: config` for production.
 
-3. **Sandbox Mode**: The `--sandbox` flag is not yet implemented.
+3. **Sandbox Mode**: Experimental. Requires `anthropic-sandbox` CLI to be installed. Only Anthropic backend currently supported. See "Sandbox Configuration" section above.
 
 **Best Practices:**
 

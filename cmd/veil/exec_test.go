@@ -9,25 +9,6 @@ import (
 	"veilwarden/internal/proxy"
 )
 
-func TestSandboxFlag_ReturnsError(t *testing.T) {
-	// Save and restore original value
-	originalSandbox := execSandbox
-	defer func() { execSandbox = originalSandbox }()
-
-	execSandbox = true
-
-	cmd := &cobra.Command{}
-	err := runExec(cmd, []string{"echo", "test"})
-
-	if err == nil {
-		t.Fatal("expected error when sandbox flag is set")
-	}
-
-	if !strings.Contains(err.Error(), "not yet implemented") {
-		t.Fatalf("expected 'not yet implemented' in error, got: %v", err)
-	}
-}
-
 func TestBuildProxyEnv_StripsDopplerToken(t *testing.T) {
 	parentEnv := []string{
 		"DOPPLER_TOKEN=dp.st.dev.secret123",
@@ -177,5 +158,80 @@ policy:
 	// Verify error is about the policy file, not about using wrong engine
 	if !strings.Contains(err.Error(), "policy_path") && !strings.Contains(err.Error(), "rego") {
 		t.Fatalf("expected error about policy file, got: %v", err)
+	}
+}
+
+func TestShouldUseSandbox(t *testing.T) {
+	tests := []struct {
+		name           string
+		configEnabled  bool
+		sandboxFlag    bool
+		noSandboxFlag  bool
+		expectedResult bool
+	}{
+		{
+			name:           "config enabled, no flags",
+			configEnabled:  true,
+			sandboxFlag:    false,
+			noSandboxFlag:  false,
+			expectedResult: true,
+		},
+		{
+			name:           "config disabled, no flags",
+			configEnabled:  false,
+			sandboxFlag:    false,
+			noSandboxFlag:  false,
+			expectedResult: false,
+		},
+		{
+			name:           "config enabled, --no-sandbox flag",
+			configEnabled:  true,
+			sandboxFlag:    false,
+			noSandboxFlag:  true,
+			expectedResult: false,
+		},
+		{
+			name:           "config disabled, --sandbox flag",
+			configEnabled:  false,
+			sandboxFlag:    true,
+			noSandboxFlag:  false,
+			expectedResult: true,
+		},
+		{
+			name:           "--sandbox overrides config",
+			configEnabled:  false,
+			sandboxFlag:    true,
+			noSandboxFlag:  false,
+			expectedResult: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &veilConfig{}
+			if tt.configEnabled {
+				cfg.Sandbox = &veilSandboxEntry{
+					Enabled: true,
+					Backend: "anthropic",
+				}
+			}
+
+			// Mock command with flags
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("sandbox", false, "")
+			cmd.Flags().Bool("no-sandbox", false, "")
+
+			if tt.sandboxFlag {
+				cmd.Flags().Set("sandbox", "true")
+			}
+			if tt.noSandboxFlag {
+				cmd.Flags().Set("no-sandbox", "true")
+			}
+
+			result := shouldUseSandbox(cfg, cmd)
+			if result != tt.expectedResult {
+				t.Errorf("shouldUseSandbox() = %v, want %v", result, tt.expectedResult)
+			}
+		})
 	}
 }

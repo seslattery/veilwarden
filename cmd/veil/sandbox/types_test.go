@@ -6,32 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestMount_String(t *testing.T) {
-	tests := []struct {
-		name string
-		m    Mount
-		want string
-	}{
-		{
-			name: "read-write mount",
-			m:    Mount{HostPath: "/tmp/data", ContainerPath: "/data", ReadOnly: false},
-			want: "/tmp/data:/data",
-		},
-		{
-			name: "readonly mount",
-			m:    Mount{HostPath: "/usr/lib", ContainerPath: "/usr/lib", ReadOnly: true},
-			want: "/usr/lib:/usr/lib:ro",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.m.String()
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -41,28 +15,48 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name: "valid config",
 			cfg: &Config{
-				Command:    []string{"python", "test.py"},
-				Env:        []string{"PATH=/usr/bin"},
-				Mounts:     []Mount{{HostPath: "/tmp", ContainerPath: "/tmp", ReadOnly: false}},
-				WorkingDir: "/workspace",
+				Command:           []string{"python", "test.py"},
+				Env:               []string{"PATH=/usr/bin"},
+				WorkingDir:        "/workspace",
+				ProxyAddr:         "127.0.0.1:8080",
+				AllowedWritePaths: []string{"/workspace", "/tmp/data"},
+				DeniedReadPaths:   []string{"~/.ssh", "~/.aws"},
 			},
 			wantErr: "",
 		},
 		{
 			name: "empty command",
 			cfg: &Config{
-				Command: []string{},
-				Env:     []string{},
+				Command:   []string{},
+				Env:       []string{},
+				ProxyAddr: "127.0.0.1:8080",
 			},
 			wantErr: "command is required",
 		},
 		{
-			name: "relative container path",
+			name: "missing proxy address",
 			cfg: &Config{
 				Command: []string{"test"},
-				Mounts:  []Mount{{HostPath: "/tmp", ContainerPath: "relative", ReadOnly: false}},
 			},
-			wantErr: "container path must be absolute",
+			wantErr: "proxy address is required",
+		},
+		{
+			name: "invalid write path",
+			cfg: &Config{
+				Command:           []string{"test"},
+				ProxyAddr:         "127.0.0.1:8080",
+				AllowedWritePaths: []string{""},
+			},
+			wantErr: "allowed_write_paths[0]: invalid path",
+		},
+		{
+			name: "invalid denied read path",
+			cfg: &Config{
+				Command:         []string{"test"},
+				ProxyAddr:       "127.0.0.1:8080",
+				DeniedReadPaths: []string{""},
+			},
+			wantErr: "denied_read_paths[0]: invalid path",
 		},
 	}
 
@@ -75,6 +69,33 @@ func TestConfig_Validate(t *testing.T) {
 				assert.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
 			}
+		})
+	}
+}
+
+func TestDefaultDeniedReadPaths(t *testing.T) {
+	paths := DefaultDeniedReadPaths()
+	assert.NotEmpty(t, paths)
+	assert.Contains(t, paths, "~/.ssh")
+	assert.Contains(t, paths, "~/.aws")
+	assert.Contains(t, paths, "~/.doppler")
+}
+
+func TestIsValidPath(t *testing.T) {
+	tests := []struct {
+		path  string
+		valid bool
+	}{
+		{"/absolute/path", true},
+		{"~/home/path", true},
+		{"./relative/path", true},
+		{"", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			result := isValidPath(tt.path)
+			assert.Equal(t, tt.valid, result)
 		})
 	}
 }

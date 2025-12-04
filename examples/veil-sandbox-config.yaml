@@ -1,0 +1,117 @@
+# VeilWarden veil CLI configuration with sandbox enabled
+# Location: ~/.veilwarden/config.yaml
+
+# API routes for secret injection
+routes:
+  # OpenAI API
+  - host: api.openai.com
+    secret_id: OPENAI_API_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+
+  # Anthropic API
+  - host: api.anthropic.com
+    secret_id: ANTHROPIC_API_KEY
+    header_name: x-api-key
+    header_value_template: "{{secret}}"
+
+  # GitHub API
+  - host: api.github.com
+    secret_id: GITHUB_TOKEN
+    header_name: Authorization
+    header_value_template: "token {{secret}}"
+
+# Optional: OPA policy enforcement
+# Requires OPA policies to be installed in the policy_path directory
+policy:
+  enabled: true
+  engine: opa
+  policy_path: ~/.veilwarden/policies
+  decision_path: veilwarden/authz/allow
+
+# Optional: Doppler secret management
+# Requires DOPPLER_TOKEN environment variable to be set
+# Falls back to environment variables if not configured or token missing
+# doppler:
+#   project: my-project
+#   config: dev           # e.g., dev, staging, prod
+#   cache_ttl: 5m        # Optional, default 5m
+
+# Sandbox configuration (process and filesystem isolation)
+# Requires: anthropic-sandbox CLI to be installed
+# Install from: https://github.com/anthropics/sandbox
+sandbox:
+  # Enable sandbox isolation
+  enabled: true
+
+  # Backend: anthropic (only option currently)
+  # Future backends: gvisor, firecracker, etc.
+  backend: anthropic
+
+  # Working directory inside sandbox
+  # Agent starts here by default
+  working_dir: /workspace
+
+  # Filesystem mounts
+  # Only mounted directories are visible inside sandbox
+  mounts:
+    # Project directory (read-write)
+    # Agent can read and write files here
+    # Changes persist between runs
+    - host: ./project
+      container: /workspace
+      readonly: false
+
+    # Persistent agent data (read-write)
+    # Use for agent state, cache, etc.
+    # Changes persist between runs
+    - host: ~/.cache/agent-data
+      container: /data
+      readonly: false
+
+    # Python standard library (read-only)
+    # Provides access to system Python installation
+    # Agent cannot modify these files
+    - host: /usr/local/lib/python3.11
+      container: /usr/local/lib/python3.11
+      readonly: true
+
+    # Python site-packages (read-only)
+    # Provides access to installed Python packages
+    # Agent cannot modify these packages
+    - host: /usr/local/lib/python3.11/site-packages
+      container: /usr/local/lib/python3.11/site-packages
+      readonly: true
+
+# Security Notes:
+#
+# What sandbox protects:
+# - Prevents reading sensitive files (~/.ssh/, ~/.aws/, etc.) unless explicitly mounted
+# - Prevents writing to system directories
+# - Only mounted directories are accessible
+# - All unmounted paths return "file not found"
+#
+# What sandbox does NOT protect:
+# - Network access (still goes through veil proxy with policies)
+# - Resource exhaustion (depends on backend limits)
+# - Kernel exploits (depends on backend isolation mechanism)
+#
+# Best practices:
+# - Only mount directories the agent actually needs
+# - Use readonly: true for directories agent shouldn't modify
+# - Never mount sensitive directories (~/.ssh/, ~/.aws/, /etc/)
+# - Always configure OPA policies to control network access
+# - Review mount configuration regularly
+#
+# Usage:
+#   # Run with sandbox (respects config)
+#   veil exec -- python agent.py
+#
+#   # Force enable sandbox (override config)
+#   veil exec --sandbox -- python agent.py
+#
+#   # Force disable sandbox (override config)
+#   veil exec --no-sandbox -- python agent.py
+#
+#   # Verbose output (see sandbox status)
+#   veil exec --verbose -- python agent.py

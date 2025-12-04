@@ -17,9 +17,30 @@ import (
 
 	"github.com/spf13/cobra"
 	"veilwarden/cmd/veil/mitm"
+	"veilwarden/cmd/veil/sandbox"
 	"veilwarden/internal/policy/opa"
 	"veilwarden/internal/proxy"
 )
+
+// shouldUseSandbox determines if sandbox should be used based on config and flags
+func shouldUseSandbox(cfg *veilConfig, cmd *cobra.Command) bool {
+	// --no-sandbox flag takes precedence
+	if cmd.Flags().Changed("no-sandbox") {
+		noSandbox, _ := cmd.Flags().GetBool("no-sandbox")
+		if noSandbox {
+			return false
+		}
+	}
+
+	// --sandbox flag overrides config
+	if cmd.Flags().Changed("sandbox") {
+		sandbox, _ := cmd.Flags().GetBool("sandbox")
+		return sandbox
+	}
+
+	// Default to config
+	return cfg.Sandbox != nil && cfg.Sandbox.Enabled
+}
 
 var execCmd = &cobra.Command{
 	Use:   "exec [flags] -- <command> [args...]",
@@ -28,6 +49,11 @@ var execCmd = &cobra.Command{
 traffic through VeilWarden's MITM proxy for transparent credential injection.
 
 The proxy starts before the command and stops when the command exits.
+
+When sandbox is enabled, the command runs in an isolated environment with:
+- Network access restricted to ONLY the proxy (prevents bypass)
+- Filesystem access controlled via allowed_write_paths and denied_read_paths
+- Sensitive credentials (DOPPLER_TOKEN) stripped from environment
 
 Example:
   veil exec -- curl https://api.github.com/user
@@ -49,21 +75,12 @@ func init() {
 
 	execCmd.Flags().StringVar(&execConfigPath, "config", "~/.veilwarden/config.yaml", "Configuration file path")
 	execCmd.Flags().BoolVar(&execSandbox, "sandbox", false, "Enable sandbox-runtime filesystem isolation")
+	execCmd.Flags().Bool("no-sandbox", false, "Disable sandbox even if enabled in config")
 	execCmd.Flags().BoolVar(&execVerbose, "verbose", false, "Show proxy logs for debugging")
 	execCmd.Flags().IntVar(&execPort, "port", 0, "Proxy listen port (0 = random)")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
-	// Check for unimplemented features
-	if execSandbox {
-		return fmt.Errorf(
-			"sandbox mode is not yet implemented\n\n" +
-			"The --sandbox flag is currently non-functional and provides no isolation.\n" +
-			"Track implementation progress at: https://github.com/yourusername/veilwarden/issues/TBD\n\n" +
-			"To run without sandboxing, remove the --sandbox flag.",
-		)
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -109,6 +126,27 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	if execVerbose {
 		fmt.Fprintf(os.Stderr, "Config loaded: %d routes\n", len(cfg.Routes))
+	}
+
+	// Determine if sandbox should be used
+	useSandbox := shouldUseSandbox(cfg, cmd)
+
+	if execVerbose {
+		if useSandbox {
+			fmt.Fprintf(os.Stderr, "Sandbox: enabled (backend: %s)\n", cfg.Sandbox.Backend)
+		} else {
+			fmt.Fprintf(os.Stderr, "Sandbox: disabled\n")
+		}
+	}
+
+	// Create sandbox backend if enabled
+	var sandboxBackend sandbox.Backend
+	if useSandbox {
+		backend, err := sandbox.NewBackend(cfg.Sandbox.Backend)
+		if err != nil {
+			return fmt.Errorf("failed to create sandbox: %w", err)
+		}
+		sandboxBackend = backend
 	}
 
 	// Convert routes to proxy.Route format
@@ -193,23 +231,31 @@ func runExec(cmd *cobra.Command, args []string) error {
 	// Build environment variables with proxy URL and CA cert
 	childEnv := buildProxyEnv(os.Environ(), proxyURL, ca.CertPath)
 
-	// Execute command
-	commandPath := args[0]
-	commandArgs := args[1:]
+	// Execute command (sandboxed or direct)
+	var cmdErr error
+	if sandboxBackend != nil {
+		cmdErr = runSandboxed(ctx, sandboxBackend, cfg, args, childEnv, proxyAddr, ca.CertPath)
+	} else {
+		// Direct execution (existing behavior)
+		commandPath := args[0]
+		commandArgs := args[1:]
 
-	childCmd := exec.CommandContext(ctx, commandPath, commandArgs...)
-	childCmd.Stdin = os.Stdin
-	childCmd.Stdout = os.Stdout
-	childCmd.Stderr = os.Stderr
-	childCmd.Env = childEnv
+		childCmd := exec.CommandContext(ctx, commandPath, commandArgs...)
+		childCmd.Stdin = os.Stdin
+		childCmd.Stdout = os.Stdout
+		childCmd.Stderr = os.Stderr
+		childCmd.Env = childEnv
 
-	if err := childCmd.Run(); err != nil {
+		cmdErr = childCmd.Run()
+	}
+
+	if cmdErr != nil {
 		// Check if proxy errored
 		select {
 		case proxyErr := <-proxyErrChan:
-			return fmt.Errorf("proxy error: %w (command may have also failed: %v)", proxyErr, err)
+			return fmt.Errorf("proxy error: %w (command may have also failed: %v)", proxyErr, cmdErr)
 		default:
-			return fmt.Errorf("command failed: %w", err)
+			return fmt.Errorf("command failed: %w", cmdErr)
 		}
 	}
 
@@ -259,6 +305,53 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 	)
 
 	return env
+}
+
+// runSandboxed executes the command in a sandbox with network isolation
+func runSandboxed(ctx context.Context, backend sandbox.Backend, cfg *veilConfig, args []string, env []string, proxyAddr, caCertPath string) error {
+	// Extract allowed hosts from routes - needed for srt domain filtering
+	var allowedHosts []string
+	for _, route := range cfg.Routes {
+		allowedHosts = append(allowedHosts, route.Host)
+	}
+
+	// Ensure CA cert path is readable by sandbox
+	allowedReadPaths := cfg.Sandbox.AllowedReadPaths
+	if caCertPath != "" {
+		allowedReadPaths = append(allowedReadPaths, caCertPath)
+	}
+
+	// Build sandbox config
+	sandboxCfg := &sandbox.Config{
+		Command:      args,
+		Env:          env,
+		WorkingDir:   cfg.Sandbox.WorkingDir,
+		ProxyAddr:    proxyAddr, // Critical: sandbox will ONLY allow connections to proxy
+		AllowedHosts: allowedHosts,
+
+		// Filesystem access control
+		AllowedWritePaths: cfg.Sandbox.AllowedWritePaths,
+		DeniedReadPaths:   cfg.Sandbox.DeniedReadPaths,
+		AllowedReadPaths:  allowedReadPaths,
+	}
+
+	// Add default denied read paths if none specified
+	if len(sandboxCfg.DeniedReadPaths) == 0 {
+		sandboxCfg.DeniedReadPaths = sandbox.DefaultDeniedReadPaths()
+	}
+
+	// Start sandboxed process
+	proc, err := backend.Start(ctx, sandboxCfg)
+	if err != nil {
+		return fmt.Errorf("sandbox start failed: %w", err)
+	}
+
+	// Pipe stdout/stderr to parent
+	go io.Copy(os.Stdout, proc.Stdout)
+	go io.Copy(os.Stderr, proc.Stderr)
+
+	// Wait for completion
+	return proc.Wait()
 }
 
 func buildPolicyEngine(cfg *veilConfig) (proxy.PolicyEngine, error) {

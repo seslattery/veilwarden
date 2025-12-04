@@ -45,6 +45,13 @@ type policyModifier struct {
 func (m *policyModifier) ModifyRequest(req *http.Request) error {
 	ctx := req.Context()
 
+	// Skip policy enforcement for CONNECT requests - they just establish tunnels
+	// The actual HTTP request inside the tunnel will be evaluated separately
+	if req.Method == http.MethodConnect {
+		m.logger.Debug("skipping policy for CONNECT tunnel", "host", req.URL.Host)
+		return nil
+	}
+
 	// Read and buffer request body for policy evaluation
 	// Use LimitReader to prevent DoS attacks via large request bodies
 	var bodyBytes []byte
@@ -121,6 +128,13 @@ type secretInjectorModifier struct {
 // ModifyRequest injects the appropriate secret into the request headers.
 func (m *secretInjectorModifier) ModifyRequest(req *http.Request) error {
 	ctx := req.Context()
+
+	// Skip secret injection for CONNECT requests - they just establish tunnels
+	// The actual HTTP request inside the tunnel will have secrets injected
+	if req.Method == http.MethodConnect {
+		m.logger.Debug("skipping secret injection for CONNECT tunnel", "host", req.URL.Host)
+		return nil
+	}
 
 	// Extract host (strip port if present)
 	host := req.URL.Host
