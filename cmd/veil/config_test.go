@@ -386,3 +386,78 @@ sandbox:
 		})
 	}
 }
+
+func TestLoadVeilConfig_RouteValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		yaml    string
+		wantErr string
+	}{
+		{
+			name: "empty host",
+			yaml: `routes:
+  - host: ""
+    secret_id: MY_SECRET
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"`,
+			wantErr: "host is required",
+		},
+		{
+			name: "empty secret_id",
+			yaml: `routes:
+  - host: api.example.com
+    secret_id: ""
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"`,
+			wantErr: "secret_id is required",
+		},
+		{
+			name: "empty header_name",
+			yaml: `routes:
+  - host: api.example.com
+    secret_id: MY_SECRET
+    header_name: ""
+    header_value_template: "Bearer {{secret}}"`,
+			wantErr: "header_name is required",
+		},
+		{
+			name: "missing secret placeholder",
+			yaml: `routes:
+  - host: api.example.com
+    secret_id: MY_SECRET
+    header_name: Authorization
+    header_value_template: "Bearer token"`,
+			wantErr: "must contain {{secret}}",
+		},
+		{
+			name: "valid config",
+			yaml: `routes:
+  - host: api.example.com
+    secret_id: MY_SECRET
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"`,
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Write temp config file
+			f, err := os.CreateTemp("", "veil-config-*.yaml")
+			require.NoError(t, err)
+			defer os.Remove(f.Name())
+
+			_, err = f.WriteString(tt.yaml)
+			require.NoError(t, err)
+			f.Close()
+
+			_, err = loadVeilConfig(f.Name())
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

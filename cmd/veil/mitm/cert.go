@@ -83,8 +83,13 @@ func GenerateEphemeralCA(sessionID string) (*EphemeralCA, error) {
 }
 
 // Cleanup removes the temporary CA certificate file.
-func (ca *EphemeralCA) Cleanup() {
-	if ca.CertPath != "" {
-		os.Remove(ca.CertPath)
+func (ca *EphemeralCA) Cleanup() error {
+	if ca.CertPath == "" {
+		return nil
 	}
+	if err := os.Remove(ca.CertPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove CA cert %s: %w", ca.CertPath, err)
+	}
+	ca.CertPath = ""
+	return nil
 }

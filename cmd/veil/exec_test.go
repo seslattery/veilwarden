@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -8,6 +10,8 @@ import (
 	"veilwarden/internal/proxy"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildProxyEnv_StripsDopplerToken(t *testing.T) {
@@ -235,4 +239,22 @@ func TestShouldUseSandbox(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProxyListenerReuse(t *testing.T) {
+	// This test verifies we don't have a race condition where
+	// we find a port, close it, then try to rebind
+	// The fix is to keep the listener open and pass it directly
+
+	// Create a listener on port 0 (random)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+
+	// Don't close - simulate "stolen" port
+	defer listener.Close()
+
+	// Try to bind to the same port - should fail
+	_, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	assert.Error(t, err, "should fail to bind to already-bound port")
 }

@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"veilwarden/cmd/veil/mitm"
-	"veilwarden/cmd/veil/sandbox"
 	"veilwarden/internal/policy/opa"
 	"veilwarden/internal/proxy"
+	"veilwarden/pkg/warden"
 
 	"github.com/spf13/cobra"
 )
@@ -80,6 +80,20 @@ func init() {
 	execCmd.Flags().IntVar(&execPort, "port", 0, "Proxy listen port (0 = random)")
 }
 
+// waitForProxy waits for the proxy to be ready to accept connections.
+func waitForProxy(addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("proxy not ready after %v", timeout)
+}
+
 func runExec(cmd *cobra.Command, args []string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -107,7 +121,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to generate CA: %w", err)
 	}
-	defer ca.Cleanup()
+	defer func() {
+		if err := ca.Cleanup(); err != nil && execVerbose {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
+	}()
 
 	if execVerbose {
 		fmt.Fprintf(os.Stderr, "CA cert: %s\n", ca.CertPath)
@@ -131,6 +149,14 @@ func runExec(cmd *cobra.Command, args []string) error {
 	// Determine if sandbox should be used
 	useSandbox := shouldUseSandbox(cfg, cmd)
 
+	// Initialize sandbox config if needed
+	if useSandbox && cfg.Sandbox == nil {
+		cfg.Sandbox = &veilSandboxEntry{
+			Enabled: true,
+			Backend: "auto",
+		}
+	}
+
 	if execVerbose {
 		if useSandbox {
 			fmt.Fprintf(os.Stderr, "Sandbox: enabled (backend: %s)\n", cfg.Sandbox.Backend)
@@ -140,9 +166,13 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create sandbox backend if enabled
-	var sandboxBackend sandbox.Backend
+	var sandboxBackend warden.Backend
 	if useSandbox {
-		backend, err := sandbox.NewBackend(cfg.Sandbox.Backend)
+		backendType := cfg.Sandbox.Backend
+		if backendType == "" {
+			backendType = "auto"
+		}
+		backend, err := warden.NewBackend(backendType)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}
@@ -161,7 +191,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	}
 
 	// Build secret store (Doppler or in-memory)
-	secretStore, err := buildSecretStore(ctx, cfg)
+	secretStore, err := buildSecretStore(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to build secret store: %w", err)
 	}
@@ -172,18 +202,29 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to initialize policy engine: %w", err)
 	}
 
-	// Find available port
+	// Find available port and keep listener open to prevent race
 	proxyPort := execPort
+	var proxyListener net.Listener
+
 	if proxyPort == 0 {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		// Bind to random port and keep listener open
+		var err error
+		proxyListener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return fmt.Errorf("failed to find available port: %w", err)
 		}
-		proxyPort = listener.Addr().(*net.TCPAddr).Port
-		_ = listener.Close() // Error intentionally ignored - we're just releasing the port
+		proxyPort = proxyListener.Addr().(*net.TCPAddr).Port
+	} else {
+		// Bind to specified port
+		var err error
+		proxyListener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", proxyPort))
+		if err != nil {
+			return fmt.Errorf("failed to listen on port %d: %w", proxyPort, err)
+		}
 	}
+	defer proxyListener.Close()
 
-	proxyAddr := fmt.Sprintf("127.0.0.1:%d", proxyPort)
+	proxyAddr := fmt.Sprintf("localhost:%d", proxyPort)
 	proxyURL := fmt.Sprintf("http://%s", proxyAddr)
 
 	if execVerbose {
@@ -213,20 +254,15 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create proxy: %w", err)
 	}
 
-	// Start proxy in goroutine
-	proxyListener, err := net.Listen("tcp", proxyAddr)
-	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", proxyAddr, err)
-	}
-	defer proxyListener.Close()
-
 	proxyErrChan := make(chan error, 1)
 	go func() {
 		proxyErrChan <- proxyServer.Serve(proxyListener)
 	}()
 
-	// Give proxy time to start
-	time.Sleep(100 * time.Millisecond)
+	// Wait for proxy to be ready (with timeout)
+	if err := waitForProxy(proxyAddr, 5*time.Second); err != nil {
+		return fmt.Errorf("proxy startup failed: %w", err)
+	}
 
 	// Build environment variables with proxy URL and CA cert
 	childEnv := buildProxyEnv(os.Environ(), proxyURL, ca.CertPath)
@@ -253,8 +289,12 @@ func runExec(cmd *cobra.Command, args []string) error {
 		// Check if proxy errored
 		select {
 		case proxyErr := <-proxyErrChan:
-			return fmt.Errorf("proxy error: %w (command may have also failed: %v)", proxyErr, cmdErr)
+			return fmt.Errorf("proxy error: %w (command also failed: %v)", proxyErr, cmdErr)
 		default:
+			// Extract exit code from ExitError and propagate it
+			if exitErr, ok := cmdErr.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
 			return fmt.Errorf("command failed: %w", cmdErr)
 		}
 	}
@@ -308,36 +348,38 @@ func buildProxyEnv(parentEnv []string, proxyURL, caCertPath string) []string {
 }
 
 // runSandboxed executes the command in a sandbox with network isolation
-func runSandboxed(ctx context.Context, backend sandbox.Backend, cfg *veilConfig, args, env []string, proxyAddr, caCertPath string) error {
-	// Extract allowed hosts from routes - needed for srt domain filtering
-	var allowedHosts []string
-	for _, route := range cfg.Routes {
-		allowedHosts = append(allowedHosts, route.Host)
-	}
-
+func runSandboxed(ctx context.Context, backend warden.Backend, cfg *veilConfig, args, env []string, proxyAddr, caCertPath string) error {
 	// Ensure CA cert path is readable by sandbox
 	allowedReadPaths := cfg.Sandbox.AllowedReadPaths
 	if caCertPath != "" {
 		allowedReadPaths = append(allowedReadPaths, caCertPath)
 	}
 
+	// Extract hosts from routes for SRT backend allowedDomains
+	allowedHosts := make([]string, 0, len(cfg.Routes))
+	for _, r := range cfg.Routes {
+		allowedHosts = append(allowedHosts, r.Host)
+	}
+
 	// Build sandbox config
-	sandboxCfg := &sandbox.Config{
-		Command:      args,
-		Env:          env,
-		WorkingDir:   cfg.Sandbox.WorkingDir,
-		ProxyAddr:    proxyAddr, // Critical: sandbox will ONLY allow connections to proxy
-		AllowedHosts: allowedHosts,
+	sandboxCfg := &warden.Config{
+		Command:    args,
+		Env:        env,
+		WorkingDir: cfg.Sandbox.WorkingDir,
+		ProxyAddr:  proxyAddr, // Critical: sandbox will ONLY allow connections to proxy
 
 		// Filesystem access control
 		AllowedWritePaths: cfg.Sandbox.AllowedWritePaths,
 		DeniedReadPaths:   cfg.Sandbox.DeniedReadPaths,
 		AllowedReadPaths:  allowedReadPaths,
+
+		// Network: hosts that can be accessed via proxy (for SRT backend)
+		AllowedHosts: allowedHosts,
 	}
 
 	// Add default denied read paths if none specified
 	if len(sandboxCfg.DeniedReadPaths) == 0 {
-		sandboxCfg.DeniedReadPaths = sandbox.DefaultDeniedReadPaths()
+		sandboxCfg.DeniedReadPaths = warden.DefaultDeniedReadPaths()
 	}
 
 	// Start sandboxed process
@@ -346,9 +388,22 @@ func runSandboxed(ctx context.Context, backend sandbox.Backend, cfg *veilConfig,
 		return fmt.Errorf("sandbox start failed: %w", err)
 	}
 
-	// Pipe stdout/stderr to parent
-	go io.Copy(os.Stdout, proc.Stdout)
-	go io.Copy(os.Stderr, proc.Stderr)
+	// Pipe stdout/stderr to parent with error logging
+	go func() {
+		if _, err := io.Copy(os.Stdout, proc.Stdout); err != nil {
+			// Only log if not a normal EOF/close
+			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+				fmt.Fprintf(os.Stderr, "veil: stdout pipe error: %v\n", err)
+			}
+		}
+	}()
+	go func() {
+		if _, err := io.Copy(os.Stderr, proc.Stderr); err != nil {
+			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+				fmt.Fprintf(os.Stderr, "veil: stderr pipe error: %v\n", err)
+			}
+		}
+	}()
 
 	// Wait for completion
 	return proc.Wait()

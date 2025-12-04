@@ -1,0 +1,96 @@
+(version 1)
+(deny default)
+
+;; === Process ===
+(allow process-exec)
+(allow process-fork)
+(allow signal (target same-sandbox))
+(allow process-info* (target same-sandbox))
+;; NOTE: mach-priv-task-port omitted - add only if tests require it
+
+;; === Filesystem ===
+
+;; Deny reads - literal paths (must come before allows)
+{{range .DeniedReadLiterals}}
+(deny file-read* (subpath "{{.}}"))
+{{end}}
+
+;; Deny reads - glob patterns
+{{range .DeniedReadPatterns}}
+(deny file-read* (regex #"{{.}}"))
+{{end}}
+
+;; Base: allow reads, deny writes
+(allow file-read*)
+(deny file-write*)
+
+;; Allow writes - literal paths
+{{range .AllowedWriteLiterals}}
+(allow file-write* (subpath "{{.}}"))
+(allow file-write-unlink (subpath "{{.}}"))
+{{end}}
+
+;; Allow writes - glob patterns
+{{range .AllowedWritePatterns}}
+(allow file-write* (regex #"{{.}}"))
+(allow file-write-unlink (regex #"{{.}}"))
+{{end}}
+
+;; Essential device writes
+(allow file-write* (literal "/dev/null"))
+(allow file-write* (literal "/dev/zero"))
+(allow file-write* (literal "/dev/tty"))
+(allow file-ioctl (literal "/dev/null"))
+(allow file-ioctl (literal "/dev/tty"))
+
+;; === Network ===
+
+(deny network*)
+(allow network-bind (local ip "localhost:*"))
+(allow network-outbound (remote tcp "localhost:{{.ProxyPort}}"))
+(allow network-inbound (local tcp "localhost:*"))
+
+;; === Unix Sockets ===
+;; WARNING: Unix sockets like /var/run/docker.sock grant significant host access.
+;; Only enable if you understand the implications.
+{{range .AllowedUnixSockets}}
+(allow file-read* (literal "{{.}}"))
+(allow file-write* (literal "{{.}}"))
+(allow file-ioctl (literal "{{.}}"))
+{{end}}
+
+;; === System Compatibility ===
+
+;; IPC (needed for Python multiprocessing, etc.)
+(allow ipc-posix-shm)
+(allow ipc-posix-sem)
+
+;; NOTE: mach-lookup is intentionally restricted.
+;; Wide-open mach-lookup allows XPC to arbitrary system daemons.
+;; Add specific services here only if needed:
+;; (allow mach-lookup (global-name "com.apple.specific.service"))
+
+;; User preferences (some libs check locale, etc.)
+(allow user-preference-read)
+
+;; System info
+(allow sysctl-read)
+(allow iokit-get-properties)
+
+;; Device access
+(allow file-read* (literal "/dev/null"))
+(allow file-read* (literal "/dev/zero"))
+(allow file-read* (literal "/dev/random"))
+(allow file-read* (literal "/dev/urandom"))
+(allow file-read* (literal "/dev/tty"))
+
+{{if .EnablePTY}}
+;; PTY support (interactive shells)
+(allow pseudo-tty)
+(allow file-read* (literal "/dev/ptmx"))
+(allow file-read* (regex #"^/dev/ttys[0-9]+$"))
+(allow file-write* (literal "/dev/ptmx"))
+(allow file-write* (regex #"^/dev/ttys[0-9]+$"))
+(allow file-ioctl (literal "/dev/ptmx"))
+(allow file-ioctl (regex #"^/dev/ttys[0-9]+$"))
+{{end}}

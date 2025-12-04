@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"veilwarden/pkg/warden"
 )
 
 // Embedded example files
@@ -38,12 +39,12 @@ routes:
 #   config: dev           # e.g., dev, staging, prod
 #   cache_ttl: 5m        # Optional, default 5m
 
-# Policy configuration
-policy:
-  enabled: true
-  engine: opa
-  policy_path: ~/.veilwarden/policies
-  decision_path: veilwarden/authz/allow
+# Policy configuration (uncomment to enable)
+# Policy is enabled when engine is set to "opa"
+# policy:
+#   engine: opa
+#   policy_path: ~/.veilwarden/policies
+#   decision_path: veilwarden/authz/allow
 `
 
 var examplePolicy = `# VeilWarden laptop policy example
@@ -100,7 +101,7 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	// Expand home directory
-	configDir := expandHomeDir(initConfigDir)
+	configDir := warden.ExpandPath(initConfigDir)
 
 	// Create directory structure
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -134,16 +135,6 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Println("4. Run: veil exec -- <your-command>")
 
 	return nil
-}
-
-func expandHomeDir(path string) string {
-	if path != "" && path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			path = filepath.Join(home, path[1:])
-		}
-	}
-	return path
 }
 
 func writeFileIfNotExists(path, content string) error {

@@ -111,12 +111,18 @@ Run agents in an isolated filesystem sandbox:
 ```yaml
 sandbox:
   enabled: true
-  backend: anthropic
+  backend: auto           # auto | seatbelt | bubblewrap | srt
   allowed_write_paths: [./project, /tmp]
   denied_read_paths: [~/.ssh, ~/.aws]
 ```
 
-Requires [srt](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime): `npm install -g @anthropic-ai/sandbox-runtime`
+**Backends:**
+- `auto` - Native implementation (seatbelt on macOS, bubblewrap on Linux)
+- `seatbelt` - macOS only, uses sandbox-exec
+- `bubblewrap` - Linux only, uses bwrap (coming soon)
+- `srt` - External [srt](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) wrapper (fallback)
+
+**Glob support:** macOS supports globs (`/tmp/agent-*`), Linux requires literal paths.
 
 See [Sandbox Quickstart](docs/sandbox-quickstart.md) for details.
 
@@ -144,7 +150,7 @@ veil exec --verbose -- <cmd>     # Show proxy logs
 
 **Limitations:**
 - Other exported env vars are visible to child processes
-- Sandbox is experimental (Anthropic srt backend only)
+- Sandbox is experimental (macOS seatbelt and srt backends available; Linux bubblewrap coming soon)
 - Policy defaults to allow-all for compatibility
 
 See [SECURITY.md](docs/SECURITY.md) for threat model details.

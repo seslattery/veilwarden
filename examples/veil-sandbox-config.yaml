@@ -38,70 +38,58 @@ policy:
 #   cache_ttl: 5m        # Optional, default 5m
 
 # Sandbox configuration (process and filesystem isolation)
-# Requires: anthropic-sandbox CLI to be installed
-# Install from: https://github.com/anthropics/sandbox
 sandbox:
   # Enable sandbox isolation
   enabled: true
 
-  # Backend: anthropic (only option currently)
-  # Future backends: gvisor, firecracker, etc.
-  backend: anthropic
+  # Backend selection:
+  #   auto     - Best available for platform (seatbelt on macOS)
+  #   seatbelt - macOS sandbox-exec (built-in, no installation needed)
+  #   srt      - Anthropic sandbox-runtime (npm install -g @anthropic-ai/sandbox-runtime)
+  backend: auto
 
-  # Working directory inside sandbox
-  # Agent starts here by default
-  working_dir: /workspace
+  # Working directory for the agent
+  # This is where the agent starts and typically has write access
+  working_dir: ~/my-project
 
-  # Filesystem mounts
-  # Only mounted directories are visible inside sandbox
-  mounts:
-    # Project directory (read-write)
-    # Agent can read and write files here
-    # Changes persist between runs
-    - host: ./project
-      container: /workspace
-      readonly: false
+  # Directories the agent can write to
+  # Agent has full read/write access to these paths
+  allowed_write_paths:
+    - ~/my-project
+    - /tmp
 
-    # Persistent agent data (read-write)
-    # Use for agent state, cache, etc.
-    # Changes persist between runs
-    - host: ~/.cache/agent-data
-      container: /data
-      readonly: false
+  # Directories the agent cannot read
+  # Access to these paths is blocked entirely
+  denied_read_paths:
+    - ~/.ssh
+    - ~/.aws
+    - ~/.gnupg
+    - ~/.doppler
+    - ~/.config/gcloud
 
-    # Python standard library (read-only)
-    # Provides access to system Python installation
-    # Agent cannot modify these files
-    - host: /usr/local/lib/python3.11
-      container: /usr/local/lib/python3.11
-      readonly: true
-
-    # Python site-packages (read-only)
-    # Provides access to installed Python packages
-    # Agent cannot modify these packages
-    - host: /usr/local/lib/python3.11/site-packages
-      container: /usr/local/lib/python3.11/site-packages
-      readonly: true
+  # Additional directories the agent can read (optional)
+  # By default, the agent can read most system paths except denied_read_paths
+  # allowed_read_paths:
+  #   - /usr/local/lib/python3
 
 # Security Notes:
 #
 # What sandbox protects:
-# - Prevents reading sensitive files (~/.ssh/, ~/.aws/, etc.) unless explicitly mounted
-# - Prevents writing to system directories
-# - Only mounted directories are accessible
-# - All unmounted paths return "file not found"
+# - Prevents reading sensitive files (~/.ssh/, ~/.aws/, etc.)
+# - Prevents writing outside allowed directories
+# - Strips DOPPLER_TOKEN from child environment
+# - Forces all network traffic through the veil proxy
 #
 # What sandbox does NOT protect:
-# - Network access (still goes through veil proxy with policies)
-# - Resource exhaustion (depends on backend limits)
+# - Network access (still goes through veil proxy with OPA policies)
+# - Resource exhaustion (CPU, memory, disk)
 # - Kernel exploits (depends on backend isolation mechanism)
 #
 # Best practices:
-# - Only mount directories the agent actually needs
-# - Use readonly: true for directories agent shouldn't modify
-# - Never mount sensitive directories (~/.ssh/, ~/.aws/, /etc/)
+# - Always block sensitive directories in denied_read_paths
+# - Only allow writes to directories the agent actually needs
+# - Use Doppler for secrets so agent never sees raw API keys
 # - Always configure OPA policies to control network access
-# - Review mount configuration regularly
 #
 # Usage:
 #   # Run with sandbox (respects config)

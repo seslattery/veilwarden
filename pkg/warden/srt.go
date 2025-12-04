@@ -1,4 +1,4 @@
-package sandbox
+package warden
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 )
 
@@ -29,47 +28,43 @@ type srtNetworkSettings struct {
 }
 
 type srtFilesystemSettings struct {
-	// AllowWrite paths - writes denied everywhere except these
-	AllowWrite []string `json:"allowWrite,omitempty"`
-	// DenyRead paths - reads blocked for these paths
-	DenyRead []string `json:"denyRead,omitempty"`
+	// AllowWrite paths - writes denied everywhere except these (required by srt, even if empty)
+	AllowWrite []string `json:"allowWrite"`
+	// DenyRead paths - reads blocked for these paths (required by srt, even if empty)
+	DenyRead []string `json:"denyRead"`
 	// DenyWrite paths within allowed paths (required by srt, even if empty)
 	DenyWrite []string `json:"denyWrite"`
 }
 
-// AnthropicBackend implements sandbox using the Anthropic srt CLI
-type AnthropicBackend struct {
+// SrtBackend implements sandbox using the Anthropic srt CLI.
+type SrtBackend struct {
 	cliPath string // Path to srt binary
 }
 
-// NewAnthropicBackend creates a new Anthropic sandbox backend
-func NewAnthropicBackend() (*AnthropicBackend, error) {
+// NewSrtBackend creates a new SRT backend, checking if srt is available.
+func NewSrtBackend() (*SrtBackend, error) {
 	// Check if srt CLI exists
 	cliPath, err := exec.LookPath("srt")
 	if err != nil {
 		return nil, fmt.Errorf(
 			"srt CLI not found in PATH.\n\n" +
 				"To install:\n" +
-				"  1. Visit: https://github.com/anthropic-experimental/sandbox-runtime\n" +
-				"  2. Follow installation instructions\n" +
-				"  3. Verify: srt --version\n\n" +
-				"Alternatively, disable sandboxing:\n" +
-				"  - Use flag: veil exec --no-sandbox\n" +
-				"  - Or in config: sandbox.enabled: false")
+				"  npm install -g @anthropic-ai/sandbox-runtime\n\n" +
+				"Alternatively, use native sandbox (macOS only):\n" +
+				"  veil exec --sandbox --backend=seatbelt")
 	}
-
-	return &AnthropicBackend{cliPath: cliPath}, nil
+	return &SrtBackend{cliPath: cliPath}, nil
 }
 
-// Start launches the sandboxed process
-func (a *AnthropicBackend) Start(ctx context.Context, cfg *Config) (*Process, error) {
+// Start launches the sandboxed process using srt.
+func (s *SrtBackend) Start(ctx context.Context, cfg *Config) (*Process, error) {
 	// Validate config first
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	// Create temporary settings file
-	settingsFile, err := a.createSettingsFile(cfg)
+	settingsFile, err := s.createSettingsFile(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create settings file: %w", err)
 	}
@@ -86,11 +81,11 @@ func (a *AnthropicBackend) Start(ctx context.Context, cfg *Config) (*Process, er
 	args := []string{"--settings", settingsFile}
 	args = append(args, command...)
 
-	cmd := exec.CommandContext(ctx, a.cliPath, args...)
+	cmd := exec.CommandContext(ctx, s.cliPath, args...)
 
 	// Set working directory if specified
 	if cfg.WorkingDir != "" {
-		cmd.Dir = expandPath(cfg.WorkingDir)
+		cmd.Dir = ExpandPath(cfg.WorkingDir)
 	}
 
 	// Set environment variables (srt inherits from parent)
@@ -118,7 +113,7 @@ func (a *AnthropicBackend) Start(ctx context.Context, cfg *Config) (*Process, er
 	// Start the sandbox process
 	if err := cmd.Start(); err != nil {
 		os.Remove(settingsFile)
-		return nil, fmt.Errorf("failed to start sandbox: %w", err)
+		return nil, fmt.Errorf("failed to start srt: %w", err)
 	}
 
 	return &Process{
@@ -127,8 +122,9 @@ func (a *AnthropicBackend) Start(ctx context.Context, cfg *Config) (*Process, er
 		Stdout: stdout,
 		Stderr: stderr,
 		Wait: func() error {
+			// Close stdin first (safe even if already closed)
+			_ = stdin.Close()
 			err := cmd.Wait()
-			stdin.Close()
 			// Clean up settings file after process exits
 			os.Remove(settingsFile)
 			return err
@@ -136,8 +132,8 @@ func (a *AnthropicBackend) Start(ctx context.Context, cfg *Config) (*Process, er
 	}, nil
 }
 
-// createSettingsFile generates a temporary srt settings JSON file
-func (a *AnthropicBackend) createSettingsFile(cfg *Config) (string, error) {
+// createSettingsFile generates a temporary srt settings JSON file.
+func (s *SrtBackend) createSettingsFile(cfg *Config) (string, error) {
 	settings := srtSettings{}
 
 	// Configure network isolation with httpProxyPort
@@ -157,20 +153,17 @@ func (a *AnthropicBackend) createSettingsFile(cfg *Config) (string, error) {
 			return "", fmt.Errorf("invalid proxy port: %s", portStr)
 		}
 
-		// Build allowed domains list
-		// With httpProxyPort, srt routes traffic through our proxy, but may still filter at sandbox level.
-		// Include proxy host and all target hosts. Policy enforcement is handled by our MITM proxy + OPA.
-		allowedDomains := []string{host, "localhost", "127.0.0.1"}
+		// Build allowed domains list from config
+		// SRT requires explicit allowedDomains even with httpProxyPort
+		// Include: proxy host (localhost/127.0.0.1) + all route hosts from config
+		// Note: SRT doesn't accept IPv6 (::1) as a valid domain pattern
+		allowedDomains := []string{"localhost", "127.0.0.1"}
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			allowedDomains = append(allowedDomains, host)
+		}
 		for _, h := range cfg.AllowedHosts {
-			// Avoid duplicates
-			duplicate := false
-			for _, existing := range allowedDomains {
-				if existing == h {
-					duplicate = true
-					break
-				}
-			}
-			if !duplicate {
+			// Skip IPv6 addresses which SRT doesn't accept
+			if h != "::1" && h != "" {
 				allowedDomains = append(allowedDomains, h)
 			}
 		}
@@ -183,16 +176,18 @@ func (a *AnthropicBackend) createSettingsFile(cfg *Config) (string, error) {
 	}
 
 	// Configure filesystem access
-	// DenyWrite is required by srt, even if empty
+	// AllowWrite, DenyRead, and DenyWrite are required by srt, even if empty
 	settings.Filesystem = srtFilesystemSettings{
-		DenyWrite: []string{}, // Required field
+		AllowWrite: []string{}, // Required field
+		DenyRead:   []string{}, // Required field
+		DenyWrite:  []string{}, // Required field
 	}
 
 	// Expand and add allowed write paths
 	if len(cfg.AllowedWritePaths) > 0 {
 		settings.Filesystem.AllowWrite = make([]string, len(cfg.AllowedWritePaths))
 		for i, p := range cfg.AllowedWritePaths {
-			settings.Filesystem.AllowWrite[i] = expandPath(p)
+			settings.Filesystem.AllowWrite[i] = ExpandPath(p)
 		}
 	}
 
@@ -200,7 +195,7 @@ func (a *AnthropicBackend) createSettingsFile(cfg *Config) (string, error) {
 	if len(cfg.DeniedReadPaths) > 0 {
 		settings.Filesystem.DenyRead = make([]string, len(cfg.DeniedReadPaths))
 		for i, p := range cfg.DeniedReadPaths {
-			settings.Filesystem.DenyRead[i] = expandPath(p)
+			settings.Filesystem.DenyRead[i] = ExpandPath(p)
 		}
 	}
 
@@ -220,26 +215,4 @@ func (a *AnthropicBackend) createSettingsFile(cfg *Config) (string, error) {
 	}
 
 	return tmpFile.Name(), nil
-}
-
-// expandPath expands ~ to home directory
-func expandPath(path string) string {
-	if path == "" {
-		return path
-	}
-
-	if path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			// Replace only the leading ~
-			if len(path) == 1 {
-				return home
-			}
-			if path[1] == '/' {
-				return filepath.Join(home, path[2:])
-			}
-		}
-	}
-
-	return path
 }

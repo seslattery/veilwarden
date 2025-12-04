@@ -26,7 +26,7 @@ func TestBuildSecretStore_DopplerConfigured(t *testing.T) {
 		},
 	}
 
-	store, err := buildSecretStore(context.Background(), cfg)
+	store, err := buildSecretStore(cfg)
 	if err != nil {
 		t.Fatalf("buildSecretStore() failed: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestBuildSecretStore_DopplerNoCacheTTL(t *testing.T) {
 		},
 	}
 
-	store, err := buildSecretStore(context.Background(), cfg)
+	store, err := buildSecretStore(cfg)
 	if err != nil {
 		t.Fatalf("buildSecretStore() failed: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestBuildSecretStore_DopplerConfigNoToken(t *testing.T) {
 	os.Setenv("API_KEY", "test-secret-value")
 	defer os.Unsetenv("API_KEY")
 
-	store, err := buildSecretStore(context.Background(), cfg)
+	store, err := buildSecretStore(cfg)
 	if err != nil {
 		t.Fatalf("buildSecretStore() failed: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestBuildSecretStore_NoDopplerConfig(t *testing.T) {
 		os.Unsetenv("OTHER_KEY")
 	}()
 
-	store, err := buildSecretStore(context.Background(), cfg)
+	store, err := buildSecretStore(cfg)
 	if err != nil {
 		t.Fatalf("buildSecretStore() failed: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestBuildSecretStore_MemoryStoreLoadsFromRoutes(t *testing.T) {
 		os.Unsetenv("UNUSED_KEY")
 	}()
 
-	store, err := buildSecretStore(context.Background(), cfg)
+	store, err := buildSecretStore(cfg)
 	if err != nil {
 		t.Fatalf("buildSecretStore() failed: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestBuildSecretStore_InvalidCacheTTL(t *testing.T) {
 		},
 	}
 
-	_, err := buildSecretStore(context.Background(), cfg)
+	_, err := buildSecretStore(cfg)
 	if err == nil {
 		t.Error("Expected error for invalid cache TTL, got nil")
 	}
@@ -213,7 +213,7 @@ func TestBuildSecretStore_EmptyRoutesMemoryStore(t *testing.T) {
 		Routes: []veilRouteEntry{},
 	}
 
-	store, err := buildSecretStore(context.Background(), cfg)
+	store, err := buildSecretStore(cfg)
 	if err != nil {
 		t.Fatalf("buildSecretStore() failed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestBuildSecretStore_DopplerCacheTTLParsing(t *testing.T) {
 				},
 			}
 
-			store, err := buildSecretStore(context.Background(), cfg)
+			store, err := buildSecretStore(cfg)
 			if err != nil {
 				t.Fatalf("buildSecretStore() failed: %v", err)
 			}

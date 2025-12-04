@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+	"veilwarden/pkg/warden"
 )
 
 // Simplified config types for veil CLI
@@ -47,12 +48,7 @@ type veilSandboxEntry struct {
 
 func loadVeilConfig(path string) (*veilConfig, error) {
 	// Expand home directory
-	if path != "" && path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err == nil {
-			path = strings.Replace(path, "~", home, 1)
-		}
-	}
+	path = warden.ExpandPath(path)
 
 	// #nosec G304 -- Config path comes from CLI flag
 	data, err := os.ReadFile(path)
@@ -88,12 +84,24 @@ func loadVeilConfig(path string) (*veilConfig, error) {
 		}
 
 		// Validate backend is known
-		validBackends := map[string]bool{
-			"anthropic": true,
-			// Future: "gvisor", "firecracker", etc.
+		if !warden.ValidBackends[cfg.Sandbox.Backend] {
+			return nil, fmt.Errorf("unknown sandbox backend: %s", cfg.Sandbox.Backend)
 		}
-		if !validBackends[cfg.Sandbox.Backend] {
-			return nil, fmt.Errorf("unknown sandbox backend: %s (available: anthropic)", cfg.Sandbox.Backend)
+	}
+
+	// Validate route configurations
+	for i, route := range cfg.Routes {
+		if route.Host == "" {
+			return nil, fmt.Errorf("routes[%d]: host is required", i)
+		}
+		if route.SecretID == "" {
+			return nil, fmt.Errorf("routes[%d]: secret_id is required", i)
+		}
+		if route.HeaderName == "" {
+			return nil, fmt.Errorf("routes[%d]: header_name is required", i)
+		}
+		if !strings.Contains(route.HeaderValueTemplate, "{{secret}}") {
+			return nil, fmt.Errorf("routes[%d]: header_value_template must contain {{secret}}", i)
 		}
 	}
 

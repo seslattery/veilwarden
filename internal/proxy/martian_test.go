@@ -87,6 +87,29 @@ func TestIsValidHeaderValue(t *testing.T) {
 	}
 }
 
+func TestIsValidHeaderValue_Injection(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{"normal", "Bearer sk-1234", true},
+		{"with tab", "Bearer\tsk-1234", true},
+		{"CRLF injection", "Bearer token\r\nX-Injected: bad", false},
+		{"LF only", "Bearer token\nX-Injected: bad", false},
+		{"CR only", "Bearer token\rX-Injected: bad", false},
+		{"null byte", "Bearer\x00token", false},
+		{"high unicode", "Bearer \u0080token", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isValidHeaderValue(tt.value)
+			assert.Equal(t, tt.valid, got)
+		})
+	}
+}
+
 // TestPolicyModifier_LargeBodyDoS tests that large request bodies are limited.
 func TestPolicyModifier_LargeBodyDoS(t *testing.T) {
 	// Create a mock policy engine that always allows

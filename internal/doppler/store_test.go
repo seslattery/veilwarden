@@ -115,6 +115,80 @@ func TestDopplerSecretStoreAPIFailure(t *testing.T) {
 	}
 }
 
+func TestStore_ConcurrentAccess(t *testing.T) {
+	// This test should be run with -race flag to detect race conditions
+
+	// Create a mock server that delays responses
+	var requestCount int32
+	client := &http.Client{
+		Transport: dopplerRoundTripper(func(req *http.Request) (*http.Response, error) {
+			atomic.AddInt32(&requestCount, 1)
+			time.Sleep(10 * time.Millisecond) // Simulate network delay
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"success":true,"name":"TEST_SECRET","value":{"raw":"value123","computed":"value123"}}`)),
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+			}, nil
+		}),
+	}
+
+	store := NewStore(&Options{
+		Token:    "dp.test.token",
+		BaseURL:  "https://doppler.test",
+		Project:  "test",
+		Config:   "dev",
+		CacheTTL: 1 * time.Minute,
+		Timeout:  5 * time.Second,
+		Client:   client,
+	})
+
+	// Launch many concurrent requests
+	const numGoroutines = 100
+	ctx := context.Background()
+	errors := make(chan error, numGoroutines)
+	results := make(chan string, numGoroutines)
+
+	// Launch all goroutines at roughly the same time
+	startBarrier := make(chan struct{})
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			<-startBarrier // Wait for signal to start
+			val, err := store.Get(ctx, "TEST_SECRET")
+			if err != nil {
+				errors <- err
+			} else {
+				results <- val
+			}
+		}()
+	}
+
+	// Signal all goroutines to start
+	close(startBarrier)
+
+	// Collect results
+	for i := 0; i < numGoroutines; i++ {
+		select {
+		case err := <-errors:
+			t.Errorf("concurrent access error: %v", err)
+		case val := <-results:
+			if val != "value123" {
+				t.Errorf("unexpected value: %q", val)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timeout waiting for goroutines")
+		}
+	}
+
+	// Verify we got some requests. Due to concurrent access without
+	// single-flight protection, we may get many requests before the cache
+	// is populated. This is acceptable - the test mainly verifies no races.
+	finalCount := atomic.LoadInt32(&requestCount)
+	if finalCount == 0 {
+		t.Error("expected at least one HTTP request")
+	}
+	t.Logf("Made %d HTTP requests for %d concurrent goroutines", finalCount, numGoroutines)
+}
+
 type dopplerRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f dopplerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

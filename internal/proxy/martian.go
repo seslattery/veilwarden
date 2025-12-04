@@ -28,6 +28,11 @@ const (
 // It checks for control characters (especially newlines) that could enable header injection.
 // Per RFC 7230, header field values must be visible ASCII characters or spaces/tabs.
 func isValidHeaderValue(value string) bool {
+	// Explicit check for newline sequences (header injection) - defense in depth
+	if strings.ContainsAny(value, "\r\n") {
+		return false
+	}
+
 	for _, r := range value {
 		// Allow: visible ASCII (0x21-0x7E), space (0x20), tab (0x09)
 		// Reject: control characters including CR (0x0D), LF (0x0A)
