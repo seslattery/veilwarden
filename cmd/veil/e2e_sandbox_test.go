@@ -1117,6 +1117,133 @@ sandbox:
 	})
 }
 
+// TestConfigAutoDiscovery verifies that veil can auto-discover .veilwarden/config.yaml
+// when running from a subdirectory without explicit --config flag.
+func TestConfigAutoDiscovery(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	backends := detectAvailableBackends()
+	if len(backends) == 0 {
+		t.Skip("no sandbox backends available")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Build veil binary
+	veilBin := filepath.Join(tmpDir, "veil")
+	repoRoot := findRepoRoot(t)
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", veilBin, "./cmd/veil")
+	buildCmd.Dir = repoRoot
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build veil: %v\n%s", err, out)
+	}
+
+	// Create directory structure:
+	// tmpDir/
+	//   .veilwarden/
+	//     config.yaml
+	//   subdir/
+	//     deepdir/
+	veilwardenDir := filepath.Join(tmpDir, ".veilwarden")
+	if err := os.MkdirAll(veilwardenDir, 0755); err != nil {
+		t.Fatalf("failed to create .veilwarden dir: %v", err)
+	}
+
+	subdir := filepath.Join(tmpDir, "subdir")
+	deepdir := filepath.Join(subdir, "deepdir")
+	if err := os.MkdirAll(deepdir, 0755); err != nil {
+		t.Fatalf("failed to create deepdir: %v", err)
+	}
+
+	// Create config that uses --no-sandbox to avoid needing Doppler
+	// We just want to verify config discovery works
+	configContent := `routes: []
+sandbox:
+  enabled: false
+`
+	configPath := filepath.Join(veilwardenDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	t.Run("DiscoverFromSubdir", func(t *testing.T) {
+		// Run veil from subdir without --config, using --verbose to see discovery
+		cmd := exec.CommandContext(ctx, veilBin, "exec", "--verbose", "--", "echo", "discovery-test")
+		cmd.Dir = subdir // Run from subdirectory
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("output: %s", output)
+			t.Fatalf("veil exec failed: %v", err)
+		}
+
+		outputStr := string(output)
+
+		// Verify config was discovered
+		if !strings.Contains(outputStr, "Discovered config:") {
+			t.Errorf("expected 'Discovered config:' in output, got: %s", outputStr)
+		}
+		if !strings.Contains(outputStr, ".veilwarden/config.yaml") {
+			t.Errorf("expected '.veilwarden/config.yaml' in discovered path, got: %s", outputStr)
+		}
+
+		// Verify command ran successfully
+		if !strings.Contains(outputStr, "discovery-test") {
+			t.Errorf("expected command output 'discovery-test', got: %s", outputStr)
+		}
+	})
+
+	t.Run("DiscoverFromDeepSubdir", func(t *testing.T) {
+		// Run veil from deep subdirectory
+		cmd := exec.CommandContext(ctx, veilBin, "exec", "--verbose", "--", "echo", "deep-test")
+		cmd.Dir = deepdir // Run from deep subdirectory
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("output: %s", output)
+			t.Fatalf("veil exec failed: %v", err)
+		}
+
+		outputStr := string(output)
+
+		// Verify config was discovered via walk-up
+		if !strings.Contains(outputStr, "Discovered config:") {
+			t.Errorf("expected 'Discovered config:' in output, got: %s", outputStr)
+		}
+		if !strings.Contains(outputStr, ".veilwarden/config.yaml") {
+			t.Errorf("expected '.veilwarden/config.yaml' in discovered path, got: %s", outputStr)
+		}
+	})
+
+	t.Run("ExplicitConfigOverridesDiscovery", func(t *testing.T) {
+		// Create an explicit config in a different location
+		explicitConfig := filepath.Join(tmpDir, "explicit-config.yaml")
+		if err := os.WriteFile(explicitConfig, []byte("routes: []\nsandbox:\n  enabled: false\n"), 0644); err != nil {
+			t.Fatalf("failed to write explicit config: %v", err)
+		}
+
+		// Run veil with explicit --config from subdir
+		cmd := exec.CommandContext(ctx, veilBin, "exec", "--verbose", "--config", explicitConfig, "--", "echo", "explicit-test")
+		cmd.Dir = subdir
+
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("output: %s", output)
+			t.Fatalf("veil exec failed: %v", err)
+		}
+
+		outputStr := string(output)
+
+		// Should NOT show "Discovered config" since we used explicit --config
+		if strings.Contains(outputStr, "Discovered config:") {
+			t.Errorf("expected no discovery message when using explicit --config, got: %s", outputStr)
+		}
+	})
+}
+
 // TestConcurrentSandboxes verifies that multiple sandbox executions can run
 // concurrently without port conflicts or resource interference.
 func TestConcurrentSandboxes(t *testing.T) {

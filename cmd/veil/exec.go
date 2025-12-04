@@ -45,7 +45,7 @@ var (
 func init() {
 	rootCmd.AddCommand(execCmd)
 
-	execCmd.Flags().StringVar(&execConfigPath, "config", "~/.veilwarden/config.yaml", "Configuration file path")
+	execCmd.Flags().StringVar(&execConfigPath, "config", "", "Configuration file path (default: auto-discover .veilwarden/config.yaml)")
 	execCmd.Flags().BoolVar(&execSandbox, "sandbox", false, "Enable sandbox-runtime filesystem isolation")
 	execCmd.Flags().Bool("no-sandbox", false, "Disable sandbox even if enabled in config")
 	execCmd.Flags().BoolVar(&execVerbose, "verbose", false, "Show proxy logs for debugging")
@@ -64,16 +64,36 @@ func runExec(cmd *cobra.Command, args []string) error {
 		cancel()
 	}()
 
-	// Load configuration
-	cfg, err := config.Load(execConfigPath)
-	if err != nil {
-		if execVerbose {
-			fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Continuing without proxy...\n")
+	// Discover or load configuration
+	configPath := execConfigPath
+	if configPath == "" {
+		// Auto-discover config
+		configPath = config.DiscoverConfig()
+		if configPath != "" && execVerbose {
+			fmt.Fprintf(os.Stderr, "Discovered config: %s\n", configPath)
 		}
-		// Continue without proxy if config fails
-		cfg = &config.Config{}
 	}
+
+	var cfg *config.Config
+	if configPath != "" {
+		var err error
+		cfg, err = config.Load(configPath)
+		if err != nil {
+			if execVerbose {
+				fmt.Fprintf(os.Stderr, "Warning: failed to load config: %v\n", err)
+				fmt.Fprintf(os.Stderr, "Using defaults...\n")
+			}
+			cfg = config.Default()
+		}
+	} else {
+		if execVerbose {
+			fmt.Fprintf(os.Stderr, "No config found, using defaults\n")
+		}
+		cfg = config.Default()
+	}
+
+	// Apply defaults for any unset values
+	cfg.ApplyDefaults()
 
 	if execVerbose {
 		fmt.Fprintf(os.Stderr, "Config loaded: %d routes\n", len(cfg.Routes))
@@ -81,14 +101,6 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	// Determine if sandbox should be used
 	useSandbox := shouldUseSandbox(cfg, cmd)
-
-	// Initialize sandbox config if needed
-	if useSandbox && cfg.Sandbox == nil {
-		cfg.Sandbox = &config.SandboxEntry{
-			Enabled: true,
-			Backend: "auto",
-		}
-	}
 
 	if execVerbose {
 		if useSandbox {
@@ -101,11 +113,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 	// Create sandbox backend if enabled
 	var sandboxBackend warden.Backend
 	if useSandbox {
-		backendType := cfg.Sandbox.Backend
-		if backendType == "" {
-			backendType = "auto"
-		}
-		backend, err := warden.NewBackend(backendType)
+		backend, err := warden.NewBackend(cfg.Sandbox.Backend)
 		if err != nil {
 			return fmt.Errorf("failed to create sandbox: %w", err)
 		}

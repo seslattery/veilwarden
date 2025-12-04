@@ -538,6 +538,106 @@ RESP=$(curl -sf -X POST -H "Authorization: Bearer ${DOPPLER_TOKEN}" -H "Content-
 echo "${RESP}" | jq -e '.secrets' >/dev/null 2>&1 && pass "Secrets set in Doppler" || { fail "Failed to set secrets"; exit 1; }
 
 # ==============================================================================
+# Config Auto-Discovery Test (using veil init)
+# ==============================================================================
+
+header "Testing Config Auto-Discovery"
+
+# Create a project directory and use veil init to set up config
+DISCOVERY_ROOT="${TEST_DIR}/discovery-test"
+DISCOVERY_SUBDIR="${DISCOVERY_ROOT}/subdir/deepdir"
+
+mkdir -p "${DISCOVERY_SUBDIR}"
+
+subheader "Test: veil init creates .veilwarden directory"
+
+# Run veil init in the discovery root
+OUTPUT=$(cd "${DISCOVERY_ROOT}" && "${BIN_DIR}/veil" init 2>&1)
+
+if [[ -f "${DISCOVERY_ROOT}/.veilwarden/config.yaml" ]]; then
+    pass "veil init created .veilwarden/config.yaml"
+else
+    fail "veil init did not create config file"
+    echo "  Output: ${OUTPUT}"
+fi
+
+if [[ -f "${DISCOVERY_ROOT}/.veilwarden/policies/allow.rego" ]]; then
+    pass "veil init created policies/allow.rego"
+else
+    fail "veil init did not create policy file"
+fi
+
+subheader "Test: Discover config from subdirectory"
+
+# Run veil from subdir without --config flag (sandbox disabled by default in generated config)
+# First, disable sandbox in the generated config for this test
+sed -i '' 's/^# sandbox:/sandbox:/' "${DISCOVERY_ROOT}/.veilwarden/config.yaml" 2>/dev/null || \
+    sed -i 's/^# sandbox:/sandbox:/' "${DISCOVERY_ROOT}/.veilwarden/config.yaml"
+echo "  enabled: false" >> "${DISCOVERY_ROOT}/.veilwarden/config.yaml"
+
+OUTPUT=$(cd "${DISCOVERY_ROOT}/subdir" && "${BIN_DIR}/veil" exec --verbose -- echo "discovery-works" 2>&1)
+
+if echo "${OUTPUT}" | grep -q "Discovered config:"; then
+    pass "Config auto-discovered from subdirectory"
+else
+    fail "Config not auto-discovered"
+    echo "  Output: ${OUTPUT}"
+fi
+
+if echo "${OUTPUT}" | grep -q ".veilwarden/config.yaml"; then
+    pass "Discovered correct .veilwarden/config.yaml path"
+else
+    fail "Wrong config path discovered"
+fi
+
+if echo "${OUTPUT}" | grep -q "discovery-works"; then
+    pass "Command executed successfully with discovered config"
+else
+    fail "Command failed with discovered config"
+fi
+
+subheader "Test: Walk-up discovery from deep subdirectory"
+
+OUTPUT=$(cd "${DISCOVERY_SUBDIR}" && "${BIN_DIR}/veil" exec --verbose -- echo "deep-discovery" 2>&1)
+
+if echo "${OUTPUT}" | grep -q "Discovered config:" && echo "${OUTPUT}" | grep -q ".veilwarden/config.yaml"; then
+    pass "Walk-up discovery found config from deep subdirectory"
+else
+    fail "Walk-up discovery failed from deep subdirectory"
+fi
+
+subheader "Test: Explicit --config overrides discovery"
+
+# Create a different config in another location
+EXPLICIT_CONFIG="${TEST_DIR}/explicit-config.yaml"
+cat > "${EXPLICIT_CONFIG}" << EOF
+routes: []
+sandbox:
+  enabled: false
+EOF
+
+OUTPUT=$(cd "${DISCOVERY_SUBDIR}" && "${BIN_DIR}/veil" exec --verbose --config "${EXPLICIT_CONFIG}" -- echo "explicit-config" 2>&1)
+
+if echo "${OUTPUT}" | grep -q "Discovered config:"; then
+    fail "Should not show 'Discovered config' when using explicit --config"
+else
+    pass "Explicit --config bypasses auto-discovery"
+fi
+
+subheader "Test: veil init --global creates ~/.veilwarden"
+
+# Test --global flag (use a custom path to avoid touching real home dir)
+GLOBAL_TEST_DIR="${TEST_DIR}/global-test"
+mkdir -p "${GLOBAL_TEST_DIR}"
+OUTPUT=$(cd "${GLOBAL_TEST_DIR}" && "${BIN_DIR}/veil" init --config-dir "${GLOBAL_TEST_DIR}/home/.veilwarden" 2>&1)
+
+if [[ -f "${GLOBAL_TEST_DIR}/home/.veilwarden/config.yaml" ]]; then
+    pass "veil init --config-dir created config in custom location"
+else
+    fail "veil init --config-dir failed"
+fi
+
+# ==============================================================================
 # Run Tests for Each Backend
 # ==============================================================================
 

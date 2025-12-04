@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/seslattery/veilwarden/pkg/warden"
 )
 
 func TestLoad_WithDoppler(t *testing.T) {
@@ -267,8 +269,8 @@ sandbox:
 	assert.Equal(t, "/tmp/data", cfg.Sandbox.AllowedWritePaths[1])
 
 	require.Len(t, cfg.Sandbox.DeniedReadPaths, 2)
-	assert.Equal(t, "~/.ssh", cfg.Sandbox.DeniedReadPaths[0])
-	assert.Equal(t, "~/.aws", cfg.Sandbox.DeniedReadPaths[1])
+	assert.Equal(t, warden.ExpandPath("~/.ssh"), cfg.Sandbox.DeniedReadPaths[0])
+	assert.Equal(t, warden.ExpandPath("~/.aws"), cfg.Sandbox.DeniedReadPaths[1])
 }
 
 func TestLoad_WithoutSandbox(t *testing.T) {

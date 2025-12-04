@@ -10,98 +10,115 @@ import (
 )
 
 // Embedded example files
-var exampleConfig = `# VeilWarden laptop configuration
-# Copy to ~/.veilwarden/config.yaml and customize
+var exampleConfig = `# VeilWarden configuration
+#
+# This config is auto-discovered when running veil from this directory or any subdirectory.
+# All relative paths are resolved relative to this config file's directory.
 
+# Routes define how secrets are injected into HTTP requests
+# Secrets are loaded from environment variables (or Doppler if configured)
 routes:
-  # OpenAI API
-  - host: api.openai.com
-    secret_id: OPENAI_API_KEY
-    header_name: Authorization
-    header_value_template: "Bearer {{secret}}"
-
-  # Anthropic API
+  # Example: Anthropic API
   - host: api.anthropic.com
     secret_id: ANTHROPIC_API_KEY
     header_name: x-api-key
     header_value_template: "{{secret}}"
 
-  # GitHub API
-  - host: api.github.com
-    secret_id: GITHUB_TOKEN
-    header_name: Authorization
-    header_value_template: "token {{secret}}"
+  # Example: OpenAI API
+  # - host: api.openai.com
+  #   secret_id: OPENAI_API_KEY
+  #   header_name: Authorization
+  #   header_value_template: "Bearer {{secret}}"
 
-# Optional: Fetch secrets from Doppler instead of environment variables
-# Requires DOPPLER_TOKEN environment variable to be set
-# doppler:
-#   project: my-project
-#   config: dev           # e.g., dev, staging, prod
-#   cache_ttl: 5m        # Optional, default 5m
-
-# Policy configuration (uncomment to enable)
-# Policy is enabled when engine is set to "opa"
+# Optional: OPA policy for request authorization
 # policy:
 #   engine: opa
-#   policy_path: ~/.veilwarden/policies
+#   policy_path: ./policies          # Relative to this config file
 #   decision_path: veilwarden/authz/allow
+
+# Optional: Fetch secrets from Doppler instead of environment variables
+# doppler:
+#   project: my-project
+#   config: dev
+
+# Sandbox settings (defaults shown - uncomment to customize)
+# sandbox:
+#   enabled: true                    # Default: true
+#   backend: auto                    # Default: auto (seatbelt on macOS)
+#   enable_pty: true                 # Default: true (for interactive CLIs)
+#   allowed_write_paths:
+#     - .                            # Relative to config dir
+#     - /tmp
+#   denied_read_paths:
+#     - ~/.ssh
+#     - ~/.aws
+#     - ~/.doppler
 `
 
-var examplePolicy = `# VeilWarden laptop policy example
-# Copy to ~/.veilwarden/policies/ and customize
+var examplePolicy = `# VeilWarden OPA policy
+#
+# This policy controls which HTTP requests are allowed through the proxy.
+# See: https://www.openpolicyagent.org/docs/latest/policy-language/
 
 package veilwarden.authz
 
-# Default deny all requests
-default allow := false
+import rego.v1
 
-# Allow OpenAI API
-allow if {
-    input.upstream_host == "api.openai.com"
-    input.method in ["GET", "POST"]
-}
+# Default: allow all requests (change to false for stricter control)
+default allow := true
 
-# Allow Anthropic API
-allow if {
-    input.upstream_host == "api.anthropic.com"
-    input.method in ["GET", "POST"]
-}
+# Example: Allow specific API hosts
+# allow if {
+#     input.host == "api.anthropic.com"
+# }
 
-# Allow GitHub API (read-only)
-allow if {
-    input.upstream_host == "api.github.com"
-    input.method in ["GET", "HEAD"]
-}
+# Example: Allow only GET and POST methods
+# allow if {
+#     input.method in ["GET", "POST", "CONNECT"]
+# }
 
-# Block DELETE operations globally
-deny if {
-    input.method == "DELETE"
-}
+# Example: Block DELETE operations
+# allow := false if {
+#     input.method == "DELETE"
+# }
 `
 
 var initCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Initialize VeilWarden configuration directory",
-	Long: `Create ~/.veilwarden directory with example configuration and policies.
+	Short: "Initialize VeilWarden configuration in current directory",
+	Long: `Create .veilwarden directory with example configuration and policies.
 
 This command creates:
-  - ~/.veilwarden/config.yaml (route configuration)
-  - ~/.veilwarden/policies/allow.rego (example OPA policy)
+  - .veilwarden/config.yaml (route and sandbox configuration)
+  - .veilwarden/policies/allow.rego (example OPA policy)
 
-You can customize these files for your use case.`,
+The config is auto-discovered when running veil from this directory or any subdirectory.
+
+Use --global to create in ~/.veilwarden instead (fallback location).`,
 	RunE: runInit,
 }
 
-var initConfigDir string
+var (
+	initConfigDir string
+	initGlobal    bool
+)
 
 func init() {
 	rootCmd.AddCommand(initCmd)
-	initCmd.Flags().StringVar(&initConfigDir, "config-dir", "~/.veilwarden", "Configuration directory to create")
+	initCmd.Flags().StringVar(&initConfigDir, "config-dir", "", "Configuration directory to create (default: .veilwarden)")
+	initCmd.Flags().BoolVar(&initGlobal, "global", false, "Create in ~/.veilwarden instead of current directory")
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
-	// Expand home directory
-	configDir := warden.ExpandPath(initConfigDir)
+	// Determine config directory
+	var configDir string
+	if initConfigDir != "" {
+		configDir = warden.ExpandPath(initConfigDir)
+	} else if initGlobal {
+		configDir = warden.ExpandPath("~/.veilwarden")
+	} else {
+		configDir = ".veilwarden"
+	}
 
 	// Create directory structure
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
@@ -125,14 +142,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✓ Created configuration directory: %s\n", configDir)
-	fmt.Printf("✓ Created config file: %s\n", configPath)
-	fmt.Printf("✓ Created example policy: %s\n", policyPath)
+	fmt.Printf("Created configuration directory: %s\n", configDir)
+	fmt.Printf("  config.yaml - routes and sandbox settings\n")
+	fmt.Printf("  policies/allow.rego - OPA policy (optional)\n")
 	fmt.Println("\nNext steps:")
-	fmt.Println("1. Set DOPPLER_TOKEN environment variable")
-	fmt.Println("2. Customize config.yaml with your routes")
-	fmt.Println("3. Customize policies/*.rego with your policies")
-	fmt.Println("4. Run: veil exec -- <your-command>")
+	fmt.Println("  1. Edit config.yaml with your API routes")
+	fmt.Println("  2. Set environment variables for secrets (e.g., ANTHROPIC_API_KEY)")
+	fmt.Println("  3. Run: veil exec -- <your-command>")
 
 	return nil
 }

@@ -11,16 +11,18 @@ import (
 )
 
 // NewStore creates a secret store based on configuration.
-// If Doppler is configured and DOPPLER_TOKEN is set, returns a Doppler store.
+// If Doppler is configured, requires DOPPLER_TOKEN and returns a Doppler store.
 // Otherwise, returns a memory store populated from environment variables.
 func NewStore(cfg *config.Config) (proxy.SecretStore, error) {
-	// Check if Doppler is configured and token is available
-	dopplerToken := os.Getenv("DOPPLER_TOKEN")
-	if cfg.Doppler != nil && dopplerToken != "" {
+	if cfg.Doppler != nil {
+		dopplerToken := os.Getenv("DOPPLER_TOKEN")
+		if dopplerToken == "" {
+			return nil, fmt.Errorf("doppler configured but DOPPLER_TOKEN environment variable not set")
+		}
 		return newDopplerStore(cfg.Doppler, dopplerToken)
 	}
 
-	// Fallback: Load secrets from environment based on route configurations
+	// No Doppler configured - load secrets from environment based on route configurations
 	return newEnvStore(cfg.Routes), nil
 }
 

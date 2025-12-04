@@ -61,19 +61,19 @@ Veilwarden gives you:
 # Install
 go install github.com/seslattery/veilwarden/cmd/veil@latest
 
-# Initialize config
+# Initialize config in your project
+cd my-project
 veil init
 
-# Set your API keys (env or Doppler)
-export OPENAI_API_KEY=sk-...
+# Set your API keys
 export ANTHROPIC_API_KEY=sk-ant-...
 
-# Run any command through the proxy
+# Run any command through the proxy (sandbox enabled by default)
 veil exec -- python my_agent.py
-veil exec -- curl https://api.openai.com/v1/models
+veil exec -- curl https://api.anthropic.com/v1/messages
 
-# Run with sandbox enabled (recommended for untrusted agents)
-veil exec --sandbox -- python untrusted_agent.py
+# Disable sandbox if needed
+veil exec --no-sandbox -- python trusted_script.py
 ```
 
 Your agent keeps making normal HTTP requests. Veilwarden:
@@ -81,11 +81,11 @@ Your agent keeps making normal HTTP requests. Veilwarden:
 1. Intercepts the outbound request
 2. Looks up the route for the target host
 3. Injects the appropriate `Authorization` or custom header
-4. Applies policy (OPA) and network / filesystem sandboxing if enabled
+4. Applies policy (OPA) and network / filesystem sandboxing
 
-With `--sandbox`, the agent runs in an isolated environment that:
+By default, agents run in an isolated sandbox that:
 
-* Blocks access to sensitive files
+* Blocks access to sensitive files (`~/.ssh`, `~/.aws`, etc.)
 * Forces all network traffic through Veilwarden
 * Prevents direct TCP / DNS exfiltration
 
@@ -93,13 +93,33 @@ With `--sandbox`, the agent runs in an isolated environment that:
 
 ## Configuration
 
-Config lives at `~/.veilwarden/config.yaml`.
+### Config Discovery
+
+Veilwarden auto-discovers configuration using walk-up search:
+
+1. Look for `.veilwarden/config.yaml` in current directory
+2. Walk up parent directories until found
+3. Fall back to `~/.veilwarden/config.yaml`
 
 ```bash
-veil init   # Creates the initial config file
+# Initialize config in current directory
+veil init
+
+# Or use --global for ~/.veilwarden
+veil init --global
+
+# Or specify explicit path
+veil exec --config /path/to/config.yaml -- command
 ```
 
-### Routes (Required)
+All relative paths in the config are resolved relative to the config file's directory:
+
+```yaml
+policy:
+  policy_path: ./policies    # Relative to config file, not cwd
+```
+
+### Routes
 
 Map destination hosts to secrets and headers:
 
@@ -129,11 +149,11 @@ When a request goes to `api.openai.com`, Veilwarden:
 Secrets are read from env vars matching `secret_id`:
 
 ```bash
-export OPENAI_API_KEY=sk-...
+export ANTHROPIC_API_KEY=sk-ant-...
 veil exec -- python agent.py
 ```
 
-#### Option B: Doppler (recommended for teams)
+#### Option B: Doppler (for teams)
 
 Use Doppler as a centralized secret store:
 
@@ -148,35 +168,43 @@ export DOPPLER_TOKEN=dp.st.xxx
 veil exec -- python agent.py
 ```
 
-If Doppler is configured but `DOPPLER_TOKEN` is missing, Veilwarden falls back to environment variables.
+If `doppler:` is configured, `DOPPLER_TOKEN` must be set or Veilwarden will error.
 
 ---
 
-### Policy (Optional, but powerful)
+### Policy (Optional)
 
 Use [OPA](https://www.openpolicyagent.org/) to enforce *which* requests are allowed:
 
 ```yaml
 policy:
   engine: opa
-  policy_path: ~/.veilwarden/policies
+  policy_path: ./policies              # Relative to config file
   decision_path: veilwarden/authz/allow
 ```
 
 | Field | Purpose |
 |-------|---------|
-| `policy_path` | Filesystem directory containing `.rego` files |
+| `policy_path` | Directory containing `.rego` files (relative to config) |
 | `decision_path` | OPA query path (`<package>/<rule>`) to evaluate for allow/deny |
 
-All `.rego` files in `policy_path` are loaded, but only `decision_path` is queried per request. This lets you split policies across multiple files while having a single entrypoint.
+All `.rego` files in `policy_path` are loaded, but only `decision_path` is queried per request.
 
-Example decisions you can encode:
+Example policy (`.veilwarden/policies/allow.rego`):
 
-* “Only allow `POST /v1/chat/completions` to `api.openai.com`.”
-* “Block requests with bodies larger than N KB.”
-* “Deny outbound calls to unknown hosts.”
+```rego
+package veilwarden.authz
 
-See `policies/example.rego` for examples.
+import rego.v1
+
+default allow := true
+
+# Block DELETE operations
+allow := false if input.method == "DELETE"
+
+# Only allow specific hosts
+allow if input.host == "api.anthropic.com"
+```
 
 ---
 
@@ -218,21 +246,31 @@ This design lets programs read system files they need (`/usr/lib`, `/etc/hosts`,
 ~/.bash_history, ~/.zsh_history
 ```
 
-Example config:
+### Defaults
+
+Sandbox is **enabled by default** with sensible settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enabled` | `true` | Sandbox is on by default |
+| `backend` | `auto` | Uses seatbelt on macOS |
+| `enable_pty` | `true` | Supports interactive CLIs |
+| `working_dir` | (cwd) | Current directory if not specified |
+
+### Example config
 
 ```yaml
 sandbox:
   enabled: true
   backend: auto                    # auto | seatbelt | srt
-  working_dir: ./my-project
+  working_dir: .                   # Relative to config file
   allowed_write_paths:
-    - ./my-project                 # Agent can write here
-    - /tmp/agent-workspace
+    - .                            # Project directory
+    - /tmp
   denied_read_paths:
     - ~/.ssh
     - ~/.aws
     - ~/.config/gcloud
-    - ~/secrets                    # Add your own sensitive paths
 ```
 
 ### Backends
@@ -270,21 +308,31 @@ See [Sandbox Quickstart](docs/sandbox-quickstart.md) for detailed setup and limi
 ## CLI Reference
 
 ```bash
-veil init                         # Create default config
-veil exec -- <command>            # Run command through proxy
-veil exec --sandbox -- <cmd>      # Force sandbox on
-veil exec --no-sandbox -- <cmd>   # Force sandbox off
+# Initialize config
+veil init                         # Create .veilwarden/ in current directory
+veil init --global                # Create ~/.veilwarden/ instead
+
+# Run commands (sandbox enabled by default)
+veil exec -- <command>            # Run with auto-discovered config
+veil exec --no-sandbox -- <cmd>   # Disable sandbox
+veil exec --config <path> -- <cmd> # Use specific config
 veil exec --verbose -- <cmd>      # Log proxy activity
 ```
 
 Common patterns:
 
 ```bash
-# Run a local dev server with protected API access
-veil exec --sandbox -- npm run dev
+# Initialize a new project
+cd my-project
+veil init
+export ANTHROPIC_API_KEY=sk-ant-...
+veil exec -- python agent.py
 
-# Test a one-off curl without exposing keys to shell history
-veil exec -- curl https://api.openai.com/v1/models
+# Run without sandbox for trusted scripts
+veil exec --no-sandbox -- npm run dev
+
+# Debug with verbose logging
+veil exec --verbose -- curl https://api.anthropic.com/v1/messages
 ```
 
 ---

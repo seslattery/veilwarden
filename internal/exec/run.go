@@ -229,6 +229,9 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 
 		// Network: hosts that can be accessed via proxy (for SRT backend)
 		AllowedHosts: allowedHosts,
+
+		// Terminal support for interactive CLIs
+		EnablePTY: cfg.Sandbox.EnablePTY,
 	}
 
 	// Add default denied read paths if none specified

@@ -1,23 +1,23 @@
 # Veilwarden config for Claude Code
 #
-# Usage:
+# Usage (run from this directory):
 #   cd examples/claude-code
 #   export ANTHROPIC_API_KEY=sk-ant-...
 #   veil exec -- claude
 #
-# Or from anywhere:
-#   veil exec --config path/to/examples/claude-code/config.yaml -- claude
+# Note: policy_path and working_dir are relative to where you run the command,
+# so you must cd into this directory first.
 
-routes:
-  - host: api.anthropic.com
-    secret_id: ANTHROPIC_API_KEY
-    header_name: x-api-key
-    header_value_template: "{{secret}}"
+#routes:
+#  - host: api.anthropic.com
+#    secret_id: ANTHROPIC_API_KEY
+#    header_name: x-api-key
+#    header_value_template: "{{secret}}"
 
 # Uncomment to use Doppler instead of env vars:
-# doppler:
-#   project: my-project
-#   config: dev
+doppler:
+  project: veilwarden
+  config: dev
 
 policy:
   engine: opa
@@ -28,9 +28,12 @@ sandbox:
   enabled: true
   backend: auto
   working_dir: .
+  enable_pty: true  # Required for interactive CLIs like Claude Code
   allowed_write_paths:
     - .
     - /tmp
+    - ~/.claude.json
+    - ~/.claude
   denied_read_paths:
     # Cloud & API credentials
     - ~/.ssh

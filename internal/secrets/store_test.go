@@ -3,6 +3,7 @@ package secrets
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,7 +64,7 @@ func TestNewStore_DopplerNoCacheTTL(t *testing.T) {
 }
 
 func TestNewStore_DopplerConfigNoToken(t *testing.T) {
-	// Test that memory store is used when Doppler config exists but token is missing
+	// Test that error is returned when Doppler config exists but token is missing
 	os.Unsetenv("DOPPLER_TOKEN")
 
 	cfg := &config.Config{
@@ -71,32 +72,16 @@ func TestNewStore_DopplerConfigNoToken(t *testing.T) {
 			Project: "test-project",
 			Config:  "test-config",
 		},
-		Routes: []config.RouteEntry{
-			{Host: "api.example.com", SecretID: "API_KEY"},
-		},
 	}
 
-	// Set environment variable for the secret
-	os.Setenv("API_KEY", "test-secret-value")
-	defer os.Unsetenv("API_KEY")
-
-	store, err := NewStore(cfg)
-	if err != nil {
-		t.Fatalf("NewStore() failed: %v", err)
+	_, err := NewStore(cfg)
+	if err == nil {
+		t.Fatal("NewStore() should fail when Doppler is configured but DOPPLER_TOKEN is not set")
 	}
 
-	// Verify it's a memory store
-	if _, ok := store.(*proxy.MemorySecretStore); !ok {
-		t.Errorf("Expected *proxy.MemorySecretStore, got %T", store)
-	}
-
-	// Verify secret was loaded from environment
-	val, err := store.Get(context.Background(), "API_KEY")
-	if err != nil {
-		t.Fatalf("Get(API_KEY) failed: %v", err)
-	}
-	if val != "test-secret-value" {
-		t.Errorf("Expected secret value 'test-secret-value', got '%s'", val)
+	expectedMsg := "DOPPLER_TOKEN"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain %q, got: %v", expectedMsg, err)
 	}
 }
 
