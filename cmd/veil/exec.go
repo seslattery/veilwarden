@@ -426,15 +426,33 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *veilConfig, 
 		allowedHosts = append(allowedHosts, r.Host)
 	}
 
+	// Determine working directory - use config value or current directory
+	workingDir := cfg.Sandbox.WorkingDir
+	if workingDir == "" {
+		var err error
+		workingDir, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("failed to get working directory: %w", err)
+		}
+	} else {
+		workingDir = warden.ExpandPath(workingDir)
+	}
+
+	// Default allowed write paths to working directory if not specified
+	allowedWritePaths := cfg.Sandbox.AllowedWritePaths
+	if len(allowedWritePaths) == 0 {
+		allowedWritePaths = []string{workingDir}
+	}
+
 	// Build sandbox config
 	sandboxCfg := &warden.Config{
 		Command:    args,
 		Env:        env,
-		WorkingDir: cfg.Sandbox.WorkingDir,
+		WorkingDir: workingDir,
 		ProxyAddr:  proxyAddr, // Critical: sandbox will ONLY allow connections to proxy
 
 		// Filesystem access control
-		AllowedWritePaths: cfg.Sandbox.AllowedWritePaths,
+		AllowedWritePaths: allowedWritePaths,
 		DeniedReadPaths:   cfg.Sandbox.DeniedReadPaths,
 		AllowedReadPaths:  allowedReadPaths,
 

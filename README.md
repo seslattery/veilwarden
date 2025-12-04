@@ -199,13 +199,13 @@ The sandbox uses an **asymmetric security model**:
 
 | Operation | Default | Config |
 |-----------|---------|--------|
-| **Writes** | ❌ Denied everywhere | `allowed_write_paths` to permit |
+| **Writes** | ❌ Denied everywhere (except cwd) | `allowed_write_paths` to permit |
 | **Reads** | ✅ Allowed everywhere | `denied_read_paths` to block |
 
 This design lets programs read system files they need (`/usr/lib`, `/etc/hosts`, etc.) while preventing writes outside your project. Sensitive paths must be explicitly blocked.
 
 **Protections:**
-* ✅ Writes denied by default—only `allowed_write_paths` are writable
+* ✅ Writes denied by default—only `allowed_write_paths` are writable (defaults to current directory if not specified)
 * ✅ Sensitive directories blocked via `denied_read_paths`
 * ✅ Symlink / hardlink tricks mitigated
 * ✅ Path traversal (`../../..`) blocked
