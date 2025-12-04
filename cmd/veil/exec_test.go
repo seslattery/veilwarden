@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"veilwarden/internal/config"
+	"github.com/seslattery/veilwarden/internal/config"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"

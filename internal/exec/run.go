@@ -13,13 +13,13 @@ import (
 	"strings"
 	"time"
 
-	"veilwarden/internal/cert"
-	"veilwarden/internal/config"
-	"veilwarden/internal/env"
-	"veilwarden/internal/policy/opa"
-	"veilwarden/internal/proxy"
-	"veilwarden/internal/secrets"
-	"veilwarden/pkg/warden"
+	"github.com/seslattery/veilwarden/internal/cert"
+	"github.com/seslattery/veilwarden/internal/config"
+	"github.com/seslattery/veilwarden/internal/env"
+	"github.com/seslattery/veilwarden/internal/policy/opa"
+	"github.com/seslattery/veilwarden/internal/proxy"
+	"github.com/seslattery/veilwarden/internal/secrets"
+	"github.com/seslattery/veilwarden/pkg/warden"
 )
 
 // Options configures the exec behavior.
@@ -277,7 +277,7 @@ func buildPolicyEngine(cfg *config.Config) (proxy.PolicyEngine, error) {
 
 		decisionPath := cfg.Policy.DecisionPath
 		if decisionPath == "" {
-			decisionPath = "veilwarden/authz/allow"
+			decisionPath = "github.com/seslattery/veilwarden/authz/allow"
 		}
 
 		return opa.New(context.Background(), cfg.Policy.PolicyPath, decisionPath)

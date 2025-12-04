@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"veilwarden/internal/config"
-	"veilwarden/internal/exec"
-	"veilwarden/pkg/warden"
+	"github.com/seslattery/veilwarden/internal/config"
+	"github.com/seslattery/veilwarden/internal/exec"
+	"github.com/seslattery/veilwarden/pkg/warden"
 
 	"github.com/spf13/cobra"
 )

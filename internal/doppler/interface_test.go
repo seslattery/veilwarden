@@ -2,7 +2,7 @@ package doppler
 
 import (
 	"context"
-	"veilwarden/internal/proxy"
+	"github.com/seslattery/veilwarden/internal/proxy"
 )
 
 // Compile-time check that Store implements proxy.SecretStore

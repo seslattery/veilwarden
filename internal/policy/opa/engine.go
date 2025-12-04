@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/open-policy-agent/opa/rego"
-	"veilwarden/internal/proxy"
+	"github.com/seslattery/veilwarden/internal/proxy"
 )
 
 // Engine implements proxy.PolicyEngine using Open Policy Agent.
@@ -37,10 +37,10 @@ func New(ctx context.Context, policyPath, decisionPath string) (*Engine, error) 
 
 	// Use default decision path if not provided
 	if decisionPath == "" {
-		decisionPath = "veilwarden/authz/allow"
+		decisionPath = "github.com/seslattery/veilwarden/authz/allow"
 	}
 
-	// Build the query string - convert path like "veilwarden/authz/allow" to "data.veilwarden.authz.allow"
+	// Build the query string - convert path like "github.com/seslattery/veilwarden/authz/allow" to "data.veilwarden.authz.allow"
 	queryPath := "data." + strings.ReplaceAll(decisionPath, "/", ".")
 
 	// Create rego instance with all policy modules

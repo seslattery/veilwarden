@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
-	"veilwarden/pkg/warden"
+	"github.com/seslattery/veilwarden/pkg/warden"
 )
 
 // Embedded example files

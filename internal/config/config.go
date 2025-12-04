@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-	"veilwarden/pkg/warden"
+	"github.com/seslattery/veilwarden/pkg/warden"
 )
 
 // Config represents the veil CLI configuration.

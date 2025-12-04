@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"veilwarden/internal/config"
-	"veilwarden/internal/doppler"
-	"veilwarden/internal/proxy"
+	"github.com/seslattery/veilwarden/internal/config"
+	"github.com/seslattery/veilwarden/internal/doppler"
+	"github.com/seslattery/veilwarden/internal/proxy"
 )
 
 func TestNewStore_DopplerConfigured(t *testing.T) {
