@@ -69,11 +69,11 @@ veil init
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Run any command through the proxy (sandbox enabled by default)
-veil exec -- python my_agent.py
-veil exec -- curl https://api.anthropic.com/v1/messages
+veil python my_agent.py
+veil curl https://api.anthropic.com/v1/messages
 
 # Disable sandbox if needed
-veil exec --no-sandbox -- python trusted_script.py
+veil --no-sandbox python trusted_script.py
 ```
 
 Your agent keeps making normal HTTP requests. Veilwarden:
@@ -109,7 +109,7 @@ veil init
 veil init --global
 
 # Or specify explicit path
-veil exec --config /path/to/config.yaml -- command
+veil --config /path/to/config.yaml command
 ```
 
 All relative paths in the config are resolved relative to the config file's directory:
@@ -150,7 +150,7 @@ Secrets are read from env vars matching `secret_id`:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-veil exec -- python agent.py
+veil python agent.py
 ```
 
 #### Option B: Doppler (for teams)
@@ -165,7 +165,7 @@ doppler:
 
 ```bash
 export DOPPLER_TOKEN=dp.st.xxx
-veil exec -- python agent.py
+veil python agent.py
 ```
 
 If `doppler:` is configured, `DOPPLER_TOKEN` must be set or Veilwarden will error.
@@ -310,10 +310,10 @@ veil init                         # Create .veilwarden/ in current directory
 veil init --global                # Create ~/.veilwarden/ instead
 
 # Run commands (sandbox enabled by default)
-veil exec -- <command>            # Run with auto-discovered config
-veil exec --no-sandbox -- <cmd>   # Disable sandbox
-veil exec --config <path> -- <cmd> # Use specific config
-veil exec --verbose -- <cmd>      # Log proxy activity
+veil <command>                    # Run with auto-discovered config
+veil --no-sandbox <command>       # Disable sandbox
+veil --config <path> <command>    # Use specific config
+veil --verbose <command>          # Log proxy activity
 ```
 
 Common patterns:
@@ -323,13 +323,13 @@ Common patterns:
 cd my-project
 veil init
 export ANTHROPIC_API_KEY=sk-ant-...
-veil exec -- python agent.py
+veil python agent.py
 
 # Run without sandbox for trusted scripts
-veil exec --no-sandbox -- npm run dev
+veil --no-sandbox npm run dev
 
 # Debug with verbose logging
-veil exec --verbose -- curl https://api.anthropic.com/v1/messages
+veil --verbose curl https://api.anthropic.com/v1/messages
 ```
 
 ---
