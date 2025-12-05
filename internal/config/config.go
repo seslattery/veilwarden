@@ -18,6 +18,7 @@ type Config struct {
 	Policy  *PolicyEntry  `yaml:"policy,omitempty"`
 	Doppler *DopplerEntry `yaml:"doppler,omitempty"`
 	Sandbox *SandboxEntry `yaml:"sandbox,omitempty"`
+	Proxy   *ProxyEntry   `yaml:"proxy,omitempty"`
 
 	// configDir is the directory containing the config file.
 	// Used for resolving relative paths.
@@ -56,6 +57,11 @@ type SandboxEntry struct {
 	AllowedReadPaths  []string `yaml:"allowed_read_paths,omitempty"`
 	EnvPassthrough    []string `yaml:"env_passthrough,omitempty"`
 	EnablePTY         bool     `yaml:"enable_pty,omitempty"`
+}
+
+// ProxyEntry configures proxy behavior.
+type ProxyEntry struct {
+	TimeoutSeconds int `yaml:"timeout_seconds,omitempty"` // default: 300 (5 minutes)
 }
 
 // Load reads and parses a configuration file.
@@ -225,4 +231,13 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// GetProxyTimeout returns the configured proxy timeout in seconds.
+// Returns 300 (5 minutes) as default if not configured.
+func (c *Config) GetProxyTimeout() int {
+	if c.Proxy != nil && c.Proxy.TimeoutSeconds > 0 {
+		return c.Proxy.TimeoutSeconds
+	}
+	return 300 // 5 minutes default
 }

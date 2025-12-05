@@ -47,17 +47,23 @@ sandbox:
   backend: auto
   enable_pty: true
   allowed_write_paths:
-    - .. # Project directory
+    - ..                        # Project directory
     - /tmp
     - /var/tmp
-    - ~/.claude.json # Claude Code state
-    - ~/.claude # Claude Code data
-    - ~/Library/Caches/go-build # Go build cache
-    # Reads: explicit extra denies on top of "block all ~/.*"
+    - ~/.claude.json            # Claude Code state
+    - ~/.claude                 # Claude Code data
+    - ~/Library/Caches/go-build # Go build cache for Go tools
+
+  # Reads:
+  #  - Engine already blocks ALL ~/.* by default (dotfiles / dotdirs)
+  #  - These are extra "paranoid" blocks for non-dot but sensitive paths.
+  #
+  # If the agent needs any of these, you must explicitly relax the policy.
   denied_read_paths:
-    # Home-level secrets (many redundant with your ~/.* rule, but fine to be explicit)
+    # Home-level secrets (redundant with ~/.* default, but explicit is fine)
     - ~/.ssh
     - ~/.aws
+    - ~/.config
     - ~/.config/gcloud
     - ~/.azure
     - ~/.kube
@@ -70,10 +76,10 @@ sandbox:
     - ~/.git-credentials
     - ~/.npmrc
     - ~/.pypirc
-    - ~/.config/gh # GitHub CLI hosts/tokens
-    - ~/.config/hub # Older GitHub tool
+    - ~/.config/gh          # GitHub CLI hosts/tokens
+    - ~/.config/hub         # Older GitHub tool
 
-    # Non-dot but very sensitive on macOS (outside your ~/.* rule)
+    # macOS keychains
     - ~/Library/Keychains
     - /Library/Keychains
     - /System/Library/Keychains
@@ -91,6 +97,19 @@ sandbox:
 
     # iCloud / app group containers (lots of auth-y stuff can live here)
     - ~/Library/Group Containers
+
+    # Paranoid extras: common user data locations
+    - ~/Desktop
+    - ~/Documents
+    - ~/Downloads
+    - ~/Movies
+    - ~/Music
+    - ~/Pictures
+    - ~/Public
+
+    # External volumes / additional data volumes
+    - /Volumes
+    - /System/Volumes/Data
 `
 
 var examplePolicy = `package veilwarden.authz

@@ -416,6 +416,58 @@ func TestLoad_RouteValidation(t *testing.T) {
 	}
 }
 
+func TestConfig_ProxyTimeoutParsing(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	configContent := `routes: []
+proxy:
+  timeout_seconds: 600
+sandbox:
+  enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if cfg.Proxy == nil {
+		t.Fatal("expected proxy config to be parsed")
+	}
+	if cfg.Proxy.TimeoutSeconds != 600 {
+		t.Errorf("expected timeout_seconds=600, got %d", cfg.Proxy.TimeoutSeconds)
+	}
+}
+
+func TestConfig_ProxyTimeoutDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Config without proxy section
+	configContent := `routes: []
+sandbox:
+  enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	// Should get default timeout when proxy section is missing
+	timeout := cfg.GetProxyTimeout()
+	if timeout != 300 {
+		t.Errorf("expected default timeout=300, got %d", timeout)
+	}
+}
+
 // Helper function
 func contains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {

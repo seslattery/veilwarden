@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +19,40 @@ import (
 	martianlog "github.com/google/martian/v3/log"
 	"github.com/google/martian/v3/mitm"
 )
+
+// Context key for policy blocking
+type policyBlockedKeyType struct{}
+
+var policyBlockedKey = policyBlockedKeyType{}
+
+// policyBlockedError is stored in context when policy denies a request
+type policyBlockedError struct {
+	reason string
+}
+
+// ErrPolicyBlocked is returned when a request is blocked by policy
+var ErrPolicyBlocked = errors.New("blocked by policy")
+
+// policyEnforcingRoundTripper wraps http.RoundTripper to enforce policy decisions.
+// This is necessary because martian converts modifier errors to warning headers
+// rather than actually blocking requests. By checking policy in the RoundTripper,
+// we can return an error that actually prevents the request from being forwarded.
+type policyEnforcingRoundTripper struct {
+	wrapped http.RoundTripper
+	logger  *slog.Logger
+}
+
+func (rt *policyEnforcingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Check if policy blocked this request
+	if blocked, ok := req.Context().Value(policyBlockedKey).(*policyBlockedError); ok && blocked != nil {
+		rt.logger.Warn("blocking request due to policy denial",
+			"host", req.URL.Host,
+			"path", req.URL.Path,
+			"reason", blocked.reason)
+		return nil, fmt.Errorf("%w: %s", ErrPolicyBlocked, blocked.reason)
+	}
+	return rt.wrapped.RoundTrip(req)
+}
 
 const (
 	// MaxPolicyBodySize is the maximum request body size (in bytes) that will be read
@@ -72,13 +108,14 @@ func isValidHeaderValue(value string) bool {
 
 // MartianConfig holds configuration for the Martian MITM proxy.
 type MartianConfig struct {
-	SessionID    string
-	CACert       *x509.Certificate
-	CAKey        *rsa.PrivateKey
-	Routes       map[string]Route
-	SecretStore  SecretStore
-	PolicyEngine PolicyEngine
-	Logger       *slog.Logger
+	SessionID      string
+	CACert         *x509.Certificate
+	CAKey          *rsa.PrivateKey
+	Routes         map[string]Route
+	SecretStore    SecretStore
+	PolicyEngine   PolicyEngine
+	Logger         *slog.Logger
+	TimeoutSeconds int // Proxy timeout in seconds. Default: 300 (5 minutes)
 }
 
 // MartianProxy wraps a Martian proxy with VeilWarden configuration.
@@ -116,7 +153,26 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 		proxy.SetMITM(mc)
 	}
 
-	proxy.SetTimeout(30 * time.Second)
+	// Set proxy timeout (default 5 minutes for streaming support)
+	timeout := 300 * time.Second
+	if cfg.TimeoutSeconds > 0 {
+		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
+	}
+	proxy.SetTimeout(timeout)
+
+	// Wrap the default RoundTripper with policy enforcement
+	// This is necessary because martian converts modifier errors to warning headers
+	// rather than actually blocking requests
+	if cfg.PolicyEngine != nil {
+		defaultRT := proxy.GetRoundTripper()
+		if defaultRT == nil {
+			defaultRT = http.DefaultTransport
+		}
+		proxy.SetRoundTripper(&policyEnforcingRoundTripper{
+			wrapped: defaultRT,
+			logger:  cfg.Logger,
+		})
+	}
 
 	s := &MartianProxy{
 		proxy:        proxy,
@@ -240,7 +296,12 @@ func (m *policyModifier) ModifyRequest(req *http.Request) error {
 			"path", req.URL.Path,
 			"method", req.Method,
 			"reason", decision.Reason)
-		return fmt.Errorf("forbidden by policy: %s", decision.Reason)
+		// Store the block reason in context for the RoundTripper to enforce
+		// We can't just return an error here because martian converts modifier
+		// errors to warning headers rather than blocking the request
+		blocked := &policyBlockedError{reason: decision.Reason}
+		*req = *req.WithContext(context.WithValue(ctx, policyBlockedKey, blocked))
+		return nil // Don't return error - let RoundTripper handle the block
 	}
 
 	m.logger.Debug("policy allowed request",

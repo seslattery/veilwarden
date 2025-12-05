@@ -116,13 +116,14 @@ func Run(ctx context.Context, cfg *config.Config, args []string, sandboxBackend 
 	}
 
 	proxyCfg := &proxy.MartianConfig{
-		SessionID:    sessionID,
-		CACert:       ca.CACert,
-		CAKey:        ca.CAKey,
-		Routes:       routes,
-		SecretStore:  secretStore,
-		PolicyEngine: policyEngine,
-		Logger:       logger,
+		SessionID:      sessionID,
+		CACert:         ca.CACert,
+		CAKey:          ca.CAKey,
+		Routes:         routes,
+		SecretStore:    secretStore,
+		PolicyEngine:   policyEngine,
+		Logger:         logger,
+		TimeoutSeconds: cfg.GetProxyTimeout(),
 	}
 
 	proxyServer, err := proxy.NewMartianProxy(proxyCfg)

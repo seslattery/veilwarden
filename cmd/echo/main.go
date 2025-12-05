@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -23,12 +24,14 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", echoHandler)
+	mux.HandleFunc("/stream", streamHandler)
+	mux.HandleFunc("/idle", idleHandler)
 
 	server := &http.Server{
 		Addr:         *addr,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		WriteTimeout: 0, // Disable for streaming support
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -56,6 +59,22 @@ type echoResponse struct {
 	Body    string      `json:"body"`
 }
 
+// StreamChunk represents a single chunk in a streaming response.
+type StreamChunk struct {
+	Seq      int       `json:"seq"`
+	Time     time.Time `json:"time"`
+	Msg      string    `json:"msg"`
+	Complete bool      `json:"complete,omitempty"`
+}
+
+// IdleResponse is returned after an idle delay completes.
+type IdleResponse struct {
+	DelaySeconds int       `json:"delay_seconds"`
+	StartTime    time.Time `json:"start_time"`
+	EndTime      time.Time `json:"end_time"`
+	Complete     bool      `json:"complete"`
+}
+
 func echoHandler(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
@@ -75,4 +94,89 @@ func echoHandler(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		log.Printf("echo encode error: %v", err)
 	}
+}
+
+func streamHandler(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	durationStr := r.URL.Query().Get("duration")
+	intervalStr := r.URL.Query().Get("interval")
+
+	duration := 45 * time.Second // default 45 seconds
+	if durationStr != "" {
+		if d, err := time.ParseDuration(durationStr + "s"); err == nil {
+			duration = d
+		}
+	}
+
+	interval := 500 * time.Millisecond // default 500ms between chunks
+	if intervalStr != "" {
+		if i, err := time.ParseDuration(intervalStr + "ms"); err == nil {
+			interval = i
+		}
+	}
+
+	// Enable chunked transfer encoding
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	start := time.Now()
+	seq := 0
+
+	for time.Since(start) < duration {
+		chunk := StreamChunk{
+			Seq:  seq,
+			Time: time.Now(),
+			Msg:  "chunk",
+		}
+
+		data, _ := json.Marshal(chunk)
+		w.Write(data)
+		w.Write([]byte("\n"))
+		flusher.Flush()
+
+		seq++
+		time.Sleep(interval)
+	}
+
+	// Send final chunk with complete marker
+	finalChunk := StreamChunk{
+		Seq:      seq,
+		Time:     time.Now(),
+		Msg:      "final",
+		Complete: true,
+	}
+	data, _ := json.Marshal(finalChunk)
+	w.Write(data)
+	w.Write([]byte("\n"))
+	flusher.Flush()
+}
+
+func idleHandler(w http.ResponseWriter, r *http.Request) {
+	delayStr := r.URL.Query().Get("delay")
+
+	delay := 45 // default 45 seconds
+	if delayStr != "" {
+		if d, err := strconv.Atoi(delayStr); err == nil && d > 0 {
+			delay = d
+		}
+	}
+
+	start := time.Now()
+	time.Sleep(time.Duration(delay) * time.Second)
+
+	resp := IdleResponse{
+		DelaySeconds: delay,
+		StartTime:    start,
+		EndTime:      time.Now(),
+		Complete:     true,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }
