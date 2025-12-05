@@ -1,5 +1,5 @@
 ![veilwarden](https://github.com/user-attachments/assets/a943fe76-1e34-48b7-80f1-89b48cedd593)
-
+> **Status:** Experimental – APIs may change; security hardening is ongoing.
 # Veilwarden
 
 > **Run powerful AI agents without ever handing them your secrets.**
@@ -26,8 +26,7 @@ Veilwarden is a sidecar proxy + sandbox that lets you give AI agents real API ac
 │        └── ✗ Can't see DOPPLER_TOKEN or raw credentials        │
 └─────────────────────────────────────────────────────────────────┘
 ````
-
-> **Status:** Experimental – APIs may change; security hardening is ongoing.
+> Use Doppler? Veilwarden can treat Doppler as its secret backend so agents only eversee stable IDs, not raw keys. Rotate keys or swap configs in Doppler and agents automatically pick it up. 👉 [Skip to Doppler integration](#option-b-doppler-for-teams)
 
 ---
 
@@ -52,6 +51,8 @@ Veilwarden gives you:
 
 * 🧩 **Drop-in integration**
   No SDKs, no code changes. Works with any HTTP client that honors proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`).
+
+
 
 ---
 

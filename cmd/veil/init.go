@@ -246,9 +246,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  config.yaml - routes and sandbox settings\n")
 	fmt.Printf("  policies/allow.rego - OPA policy (optional)\n")
 	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Edit config.yaml with your API routes")
-	fmt.Println("  2. Set environment variables for secrets (e.g., ANTHROPIC_API_KEY)")
-	fmt.Println("  3. Run: veil exec -- <your-command>")
+	fmt.Println("  1. Run: veil <your-command>")
+	fmt.Println("  2. (Optional) Edit config.yaml to customize routes and settings")
+	fmt.Println("  3. (Optional) Set environment variables for secrets (e.g., ANTHROPIC_API_KEY)")
 
 	return nil
 }
