@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/martian/v3"
 	"github.com/google/martian/v3/fifo"
+	martianlog "github.com/google/martian/v3/log"
 	"github.com/google/martian/v3/mitm"
 )
 
@@ -23,6 +24,30 @@ const (
 	// Default: 1MB - sufficient for most API requests
 	MaxPolicyBodySize = 1 * 1024 * 1024 // 1 MB
 )
+
+// filteredMartianLogger wraps slog to filter out benign connection errors from martian.
+// Errors like "broken pipe" and "connection reset by peer" are normal during client
+// disconnects and are demoted to debug level to reduce log noise.
+type filteredMartianLogger struct {
+	logger *slog.Logger
+}
+
+func (l *filteredMartianLogger) Infof(format string, args ...interface{}) {
+	l.logger.Info(fmt.Sprintf(format, args...))
+}
+
+func (l *filteredMartianLogger) Debugf(format string, args ...interface{}) {
+	l.logger.Debug(fmt.Sprintf(format, args...))
+}
+
+func (l *filteredMartianLogger) Errorf(format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	if strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer") {
+		l.logger.Debug(msg)
+		return
+	}
+	l.logger.Error(msg)
+}
 
 // isValidHeaderValue validates that a string is safe to use as an HTTP header value.
 // It checks for control characters (especially newlines) that could enable header injection.
@@ -71,6 +96,9 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+
+	// Configure martian's internal logger to filter benign connection errors
+	martianlog.SetLogger(&filteredMartianLogger{logger: cfg.Logger})
 
 	// Create Martian proxy
 	proxy := martian.NewProxy()
