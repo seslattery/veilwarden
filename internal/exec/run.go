@@ -245,22 +245,39 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		return fmt.Errorf("sandbox start failed: %w", err)
 	}
 
-	// Pipe stdout/stderr to parent with error logging
-	go func() {
-		if _, err := io.Copy(os.Stdout, proc.Stdout); err != nil {
-			// Only log if not a normal EOF/close
-			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
-				fmt.Fprintf(os.Stderr, "veil: stdout pipe error: %v\n", err)
+	// For PTY mode, stdin is handled by the backend and stdout/stderr are combined
+	// For pipe mode, we need to copy all three streams
+	if cfg.Sandbox.EnablePTY {
+		// PTY mode: just copy the combined output to stdout
+		go func() {
+			io.Copy(os.Stdout, proc.Stdout)
+		}()
+	} else {
+		// Pipe mode: copy all streams
+		go func() {
+			if _, err := io.Copy(proc.Stdin, os.Stdin); err != nil {
+				if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+					fmt.Fprintf(os.Stderr, "veil: stdin pipe error: %v\n", err)
+				}
 			}
-		}
-	}()
-	go func() {
-		if _, err := io.Copy(os.Stderr, proc.Stderr); err != nil {
-			if err != io.EOF && !strings.Contains(err.Error(), "closed") {
-				fmt.Fprintf(os.Stderr, "veil: stderr pipe error: %v\n", err)
+			proc.Stdin.Close()
+		}()
+
+		go func() {
+			if _, err := io.Copy(os.Stdout, proc.Stdout); err != nil {
+				if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+					fmt.Fprintf(os.Stderr, "veil: stdout pipe error: %v\n", err)
+				}
 			}
-		}
-	}()
+		}()
+		go func() {
+			if _, err := io.Copy(os.Stderr, proc.Stderr); err != nil {
+				if err != io.EOF && !strings.Contains(err.Error(), "closed") {
+					fmt.Fprintf(os.Stderr, "veil: stderr pipe error: %v\n", err)
+				}
+			}
+		}()
+	}
 
 	// Wait for completion
 	return proc.Wait()

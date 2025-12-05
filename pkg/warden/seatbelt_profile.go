@@ -5,7 +5,9 @@ import (
 	_ "embed"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
+	"strings"
 	"text/template"
 )
 
@@ -20,6 +22,10 @@ type profileData struct {
 	AllowedUnixSockets   []string
 	ProxyPort            int
 	EnablePTY            bool
+
+	// Home directory dotfile protection
+	HomeDir                 string   // e.g., /Users/sean
+	DotfileReadExceptions   []string // Paths that are allowed to read despite being dotfiles
 }
 
 func generateSeatbeltProfile(cfg *Config) (string, error) {
@@ -46,6 +52,13 @@ func buildProfileData(cfg *Config) (*profileData, error) {
 		AllowedUnixSockets: cfg.AllowedUnixSockets,
 		EnablePTY:          cfg.EnablePTY,
 	}
+
+	// Get home directory for dotfile protection
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get home directory: %w", err)
+	}
+	data.HomeDir = homeDir
 
 	// Extract proxy port
 	_, portStr, err := net.SplitHostPort(cfg.ProxyAddr)
@@ -92,7 +105,23 @@ func buildProfileData(cfg *Config) (*profileData, error) {
 		} else {
 			data.AllowedWriteLiterals = append(data.AllowedWriteLiterals, expanded)
 		}
+
+		// If this is a home directory dotfile, add it as an exception
+		if isHomeDotfile(expanded, homeDir) {
+			data.DotfileReadExceptions = append(data.DotfileReadExceptions, expanded)
+		}
 	}
 
 	return data, nil
+}
+
+// isHomeDotfile checks if a path is a dotfile/dotdir in the home directory
+func isHomeDotfile(path, homeDir string) bool {
+	if !strings.HasPrefix(path, homeDir+"/") {
+		return false
+	}
+	// Get the relative path after home directory
+	rel := strings.TrimPrefix(path, homeDir+"/")
+	// Check if it starts with a dot
+	return strings.HasPrefix(rel, ".")
 }

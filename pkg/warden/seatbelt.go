@@ -5,9 +5,15 @@ package warden
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
+	"os/signal"
+	"syscall"
+
+	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 // SeatbeltBackend implements sandbox using macOS seatbelt (sandbox-exec).
@@ -58,18 +64,89 @@ func (s *SeatbeltBackend) Start(ctx context.Context, cfg *Config) (*Process, err
 	cmd.Env = cfg.Env
 	cmd.Dir = cfg.WorkingDir
 
+	// Use PTY for interactive shells
+	if cfg.EnablePTY {
+		return startWithPTY(cmd, profilePath)
+	}
+
+	return startWithPipes(cmd, profilePath)
+}
+
+// startWithPTY starts the command with a pseudo-terminal for interactive use.
+func startWithPTY(cmd *exec.Cmd, profilePath string) (*Process, error) {
+	// Start command with PTY
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		os.Remove(profilePath)
+		return nil, fmt.Errorf("failed to start with pty: %w", err)
+	}
+
+	// Handle terminal resize
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
+	go func() {
+		for range ch {
+			if err := pty.InheritSize(os.Stdin, ptmx); err != nil {
+				// Ignore errors - terminal might not support resize
+			}
+		}
+	}()
+	ch <- syscall.SIGWINCH // Initial resize
+
+	// Set stdin to raw mode for proper terminal handling
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		// Not a terminal, fall back to normal mode
+		oldState = nil
+	}
+
+	// Copy stdin to pty
+	go func() {
+		io.Copy(ptmx, os.Stdin)
+	}()
+
+	return &Process{
+		PID:    cmd.Process.Pid,
+		Stdin:  ptmx,
+		Stdout: ptmx,
+		Stderr: io.NopCloser(&nilReader{}), // PTY combines stdout/stderr
+		Wait: func() error {
+			err := cmd.Wait()
+			os.Remove(profilePath)
+			signal.Stop(ch)
+			close(ch)
+			if oldState != nil {
+				term.Restore(int(os.Stdin.Fd()), oldState)
+			}
+			return err
+		},
+	}, nil
+}
+
+// nilReader is an io.Reader that always returns EOF.
+type nilReader struct{}
+
+func (r *nilReader) Read(p []byte) (n int, err error) {
+	return 0, io.EOF
+}
+
+// startWithPipes starts the command with standard pipes (non-interactive).
+func startWithPipes(cmd *exec.Cmd, profilePath string) (*Process, error) {
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		os.Remove(profilePath)
 		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
 	}
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		os.Remove(profilePath)
 		return nil, fmt.Errorf("failed to create stdout pipe: %w", err)
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		os.Remove(profilePath)
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
@@ -85,7 +162,7 @@ func (s *SeatbeltBackend) Start(ctx context.Context, cfg *Config) (*Process, err
 		Stderr: stderr,
 		Wait: func() error {
 			err := cmd.Wait()
-			os.Remove(profilePath) // Clean up temp file
+			os.Remove(profilePath)
 			return err
 		},
 	}, nil

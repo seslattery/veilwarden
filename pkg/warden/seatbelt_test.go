@@ -45,14 +45,18 @@ func TestSeatbeltBackend_FilesystemIsolation(t *testing.T) {
 	backend := &SeatbeltBackend{}
 
 	tmpDir := t.TempDir()
+	// Resolve symlinks to match what seatbelt expects (e.g., /var -> /private/var)
+	realTmpDir, err := filepath.EvalSymlinks(tmpDir)
+	require.NoError(t, err)
+
 	secretFile := filepath.Join(tmpDir, "secret.txt")
-	err := os.WriteFile(secretFile, []byte("secret"), 0644)
+	err = os.WriteFile(secretFile, []byte("secret"), 0644)
 	require.NoError(t, err)
 
 	cfg := &Config{
 		Command:         []string{"cat", secretFile},
 		ProxyAddr:       "127.0.0.1:8080",
-		DeniedReadPaths: []string{tmpDir},
+		DeniedReadPaths: []string{realTmpDir},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -72,11 +76,7 @@ func TestSeatbeltBackend_FilesystemIsolation(t *testing.T) {
 	err = proc.Wait()
 	stderr := <-stderrChan
 
-	// Either the command should fail, or stderr should contain permission denied
-	if err == nil {
-		assert.Contains(t, stderr, "Operation not permitted", "expected permission denied error in stderr")
-	} else {
-		// If it failed, stderr should indicate why
-		assert.Contains(t, stderr, "Operation not permitted", "expected permission denied error in stderr")
-	}
+	// Command should fail with permission denied
+	require.Error(t, err, "expected command to fail when reading denied path")
+	assert.Contains(t, stderr, "Operation not permitted", "expected permission denied error in stderr")
 }

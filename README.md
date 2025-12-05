@@ -230,21 +230,18 @@ The sandbox uses an **asymmetric security model**:
 | **Writes** | ❌ Denied everywhere (except cwd) | `allowed_write_paths` to permit |
 | **Reads** | ✅ Allowed everywhere | `denied_read_paths` to block |
 
-This design lets programs read system files they need (`/usr/lib`, `/etc/hosts`, etc.) while preventing writes outside your project. Sensitive paths must be explicitly blocked.
+This design lets programs read system files they need (`/usr/lib`, `/etc/hosts`, etc.) while preventing writes outside your project.
 
 **Protections:**
 * ✅ Writes denied by default—only `allowed_write_paths` are writable (defaults to current directory if not specified)
-* ✅ Sensitive directories blocked via `denied_read_paths`
+* ✅ **All home directory dotfiles/dotdirs blocked by default** (`~/.ssh`, `~/.config`, `~/.aws`, `~/.bashrc`, etc.)
+* ✅ Includes all nested contents (e.g., `~/.config/git/` is also blocked)
+* ✅ Exceptions auto-inferred from `allowed_write_paths` (e.g., `~/.claude` is readable if writable)
+* ✅ Additional paths can be blocked via `denied_read_paths`
 * ✅ Symlink / hardlink tricks mitigated
 * ✅ Path traversal (`../../..`) blocked
 
-**Recommended `denied_read_paths`** (see `examples/claude-code/config.yaml`):
-```
-~/.ssh, ~/.aws, ~/.config/gcloud, ~/.kube, ~/.docker,
-~/.doppler, ~/.gnupg, ~/.vault-token, ~/.anthropic,
-~/.netrc, ~/.git-credentials, ~/.npmrc, ~/.pypirc,
-~/.bash_history, ~/.zsh_history
-```
+> **Note:** On macOS, all `~/.*` paths are denied by default. You don't need to list them in `denied_read_paths`. If you need an agent to read a dotfile, add it to `allowed_write_paths`.
 
 ### Defaults
 

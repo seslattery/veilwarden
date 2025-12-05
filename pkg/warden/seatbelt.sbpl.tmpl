@@ -2,11 +2,20 @@
 (deny default)
 
 ;; === Process ===
-(allow process-exec)
+(allow process-exec*)
 (allow process-fork)
 (allow signal (target same-sandbox))
-(allow process-info* (target same-sandbox))
-;; NOTE: mach-priv-task-port omitted - add only if tests require it
+(allow process-info*)  ;; Allow reading process info (pgrep, etc.)
+(allow mach-priv-task-port)  ;; Needed for process inspection
+
+;; === Setuid Binary Escape Hatch ===
+;; macOS blocks setuid binaries as the initial sandbox-exec process, but allows
+;; child processes to escape with (with no-sandbox). Required for /bin/ps which
+;; Homebrew's shell initialization (shellenv.sh) uses.
+(allow process-exec-interpreter)
+(allow process-exec
+  (literal "/bin/ps")
+  (with no-sandbox))
 
 ;; === Filesystem ===
 
@@ -18,6 +27,19 @@
 ;; Deny reads - glob patterns
 {{range .DeniedReadPatterns}}
 (deny file-read* (regex #"{{.}}"))
+{{end}}
+
+;; Deny all home directory dotfiles by default (more secure)
+;; Exceptions are inferred from allowed_write_paths
+{{if .DotfileReadExceptions}}
+(deny file-read*
+  (require-all
+    (regex #"^{{.HomeDir}}/\..*")
+{{range .DotfileReadExceptions}}
+    (require-not (subpath "{{.}}"))
+{{end}}))
+{{else}}
+(deny file-read* (regex #"^{{.HomeDir}}/\..*"))
 {{end}}
 
 ;; Base: allow reads, deny writes
@@ -42,6 +64,16 @@
 (allow file-write* (literal "/dev/tty"))
 (allow file-ioctl (literal "/dev/null"))
 (allow file-ioctl (literal "/dev/tty"))
+(allow file-ioctl (literal "/dev/zero"))
+(allow file-ioctl (literal "/dev/random"))
+(allow file-ioctl (literal "/dev/urandom"))
+(allow file-ioctl (literal "/dev/dtracehelper"))
+
+;; macOS temp directories (in addition to /tmp)
+;; NOTE: Only allow writes here. Reads are already allowed by (allow file-read*).
+;; Adding (allow file-read* (subpath "/private/var/folders")) would override deny rules.
+(allow file-write* (subpath "/private/var/folders"))
+(allow file-write-unlink (subpath "/private/var/folders"))
 
 ;; === Network ===
 
@@ -65,17 +97,45 @@
 (allow ipc-posix-shm)
 (allow ipc-posix-sem)
 
-;; NOTE: mach-lookup is intentionally restricted.
-;; Wide-open mach-lookup allows XPC to arbitrary system daemons.
-;; Add specific services here only if needed:
-;; (allow mach-lookup (global-name "com.apple.specific.service"))
+;; Mach services needed for common utilities (pgrep, node, python, etc.)
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.system.notification_center")
+  (global-name "com.apple.lsd.mapdb")
+  (global-name "com.apple.bsd.dirhelper")
+  (global-name "com.apple.securityd.xpc")
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.trustd.agent")
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.distributed_notifications@Uv3")
+  (global-name "com.apple.fonts")
+  (global-name "com.apple.FontObjectsServer")
+  (global-name "com.apple.logd")
+  (global-name "com.apple.PowerManagement.control")
+  (global-name "com.apple.audio.systemsoundserver")
+  (global-name "com.apple.sysmond"))
 
 ;; User preferences (some libs check locale, etc.)
 (allow user-preference-read)
 
 ;; System info
 (allow sysctl-read)
+(allow sysctl-write (sysctl-name "kern.tcsm_enable")) ;; V8/Node.js thread calculations
 (allow iokit-get-properties)
+
+;; IOKit for GPU rendering and power management
+(allow iokit-open
+  (iokit-registry-entry-class "IOSurfaceRootUserClient")
+  (iokit-registry-entry-class "RootDomainUserClient")
+  (iokit-user-client-class "IOSurfaceSendRight"))
+
+;; System sockets for IPC
+(allow system-socket (require-all (socket-domain AF_SYSTEM) (socket-protocol 2)))
+
+;; Distributed notifications
+(allow distributed-notification-post)
 
 ;; Device access
 (allow file-read* (literal "/dev/null"))

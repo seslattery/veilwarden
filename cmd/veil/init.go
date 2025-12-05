@@ -17,18 +17,18 @@ var exampleConfig = `# VeilWarden configuration
 
 # Routes define how secrets are injected into HTTP requests
 # Secrets are loaded from environment variables (or Doppler if configured)
-routes:
-  # Example: Anthropic API
-  - host: api.anthropic.com
-    secret_id: ANTHROPIC_API_KEY
-    header_name: x-api-key
-    header_value_template: "{{secret}}"
-
-  # Example: OpenAI API
-  # - host: api.openai.com
-  #   secret_id: OPENAI_API_KEY
-  #   header_name: Authorization
-  #   header_value_template: "Bearer {{secret}}"
+# Uncomment and customize routes as needed:
+#
+#routes:
+#  - host: api.anthropic.com
+#    secret_id: ANTHROPIC_API_KEY
+#    header_name: x-api-key
+#    header_value_template: "{{secret}}"
+#
+#  - host: api.openai.com
+#    secret_id: OPENAI_API_KEY
+#    header_name: Authorization
+#    header_value_template: "Bearer {{secret}}"
 
 # Optional: OPA policy for request authorization
 # policy:
@@ -41,18 +41,28 @@ routes:
 #   project: my-project
 #   config: dev
 
-# Sandbox settings (defaults shown - uncomment to customize)
-# sandbox:
-#   enabled: true                    # Default: true
-#   backend: auto                    # Default: auto (seatbelt on macOS)
-#   enable_pty: true                 # Default: true (for interactive CLIs)
-#   allowed_write_paths:
-#     - .                            # Relative to config dir
-#     - /tmp
-#   denied_read_paths:
-#     - ~/.ssh
-#     - ~/.aws
-#     - ~/.doppler
+# Sandbox settings
+sandbox:
+  enabled: true
+  backend: auto
+  enable_pty: true                   # Required for interactive CLIs
+  allowed_write_paths:
+    - .                              # Project directory (relative to config)
+    - /tmp
+    - ~/.claude.json                 # Claude Code state
+    - ~/.claude                      # Claude Code data
+  denied_read_paths:
+    - ~/.ssh
+    - ~/.aws
+    - ~/.config/gcloud
+    - ~/.azure
+    - ~/.kube
+    - ~/.docker
+    - ~/.doppler
+    - ~/.gnupg
+    - ~/.vault-token
+    - ~/.netrc
+    - ~/.git-credentials
 `
 
 var examplePolicy = `# VeilWarden OPA policy
