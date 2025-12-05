@@ -17,24 +17,24 @@ var exampleConfig = `# VeilWarden configuration
 
 # Routes define how secrets are injected into HTTP requests
 # Secrets are loaded from environment variables (or Doppler if configured)
-# Uncomment and customize routes as needed:
-#
 #routes:
-#  - host: api.anthropic.com
-#    secret_id: ANTHROPIC_API_KEY
-#    header_name: x-api-key
-#    header_value_template: "{{secret}}"
-#
-#  - host: api.openai.com
-#    secret_id: OPENAI_API_KEY
-#    header_name: Authorization
-#    header_value_template: "Bearer {{secret}}"
+# Example: Anthropic API
+# - host: api.anthropic.com
+#  secret_id: ANTHROPIC_API_KEY
+#  header_name: x-api-key
+#  header_value_template: "{{secret}}"
+
+# Example: OpenAI API
+# - host: api.openai.com
+#   secret_id: OPENAI_API_KEY
+#   header_name: Authorization
+#   header_value_template: "Bearer {{secret}}"
 
 # Optional: OPA policy for request authorization
-# policy:
-#   engine: opa
-#   policy_path: ./policies          # Relative to this config file
-#   decision_path: veilwarden/authz/allow
+policy:
+  engine: opa
+  policy_path: ./policies # Relative to this config file
+  decision_path: veilwarden/authz/allow
 
 # Optional: Fetch secrets from Doppler instead of environment variables
 # doppler:
@@ -45,13 +45,17 @@ var exampleConfig = `# VeilWarden configuration
 sandbox:
   enabled: true
   backend: auto
-  enable_pty: true                   # Required for interactive CLIs
+  enable_pty: true
   allowed_write_paths:
-    - .                              # Project directory (relative to config)
+    - .. # Project directory
     - /tmp
-    - ~/.claude.json                 # Claude Code state
-    - ~/.claude                      # Claude Code data
+    - /var/tmp
+    - ~/.claude.json # Claude Code state
+    - ~/.claude # Claude Code data
+    - ~/Library/Caches/go-build # Go build cache
+    # Reads: explicit extra denies on top of "block all ~/.*"
   denied_read_paths:
+    # Home-level secrets (many redundant with your ~/.* rule, but fine to be explicit)
     - ~/.ssh
     - ~/.aws
     - ~/.config/gcloud
@@ -60,37 +64,123 @@ sandbox:
     - ~/.docker
     - ~/.doppler
     - ~/.gnupg
+    - ~/.password-store
     - ~/.vault-token
     - ~/.netrc
     - ~/.git-credentials
+    - ~/.npmrc
+    - ~/.pypirc
+    - ~/.config/gh # GitHub CLI hosts/tokens
+    - ~/.config/hub # Older GitHub tool
+
+    # Non-dot but very sensitive on macOS (outside your ~/.* rule)
+    - ~/Library/Keychains
+    - /Library/Keychains
+    - /System/Library/Keychains
+
+    # Browsers – cookies, sessions, OAuth tokens, etc.
+    - ~/Library/Application Support/Google/Chrome
+    - ~/Library/Application Support/BraveSoftware
+    - ~/Library/Application Support/Microsoft Edge
+    - ~/Library/Application Support/Firefox
+    - ~/Library/Safari
+
+    # Comms / personal data
+    - ~/Library/Mail
+    - ~/Library/Messages
+
+    # iCloud / app group containers (lots of auth-y stuff can live here)
+    - ~/Library/Group Containers
 `
 
-var examplePolicy = `# VeilWarden OPA policy
-#
-# This policy controls which HTTP requests are allowed through the proxy.
-# See: https://www.openpolicyagent.org/docs/latest/policy-language/
-
-package veilwarden.authz
+var examplePolicy = `package veilwarden.authz
 
 import rego.v1
 
-# Default: allow all requests (change to false for stricter control)
-default allow := true
+default allow := false
 
-# Example: Allow specific API hosts
+llm_hosts := {
+  "api.anthropic.com",
+  "api.openai.com",
+  "generativelanguage.googleapis.com",
+}
+
+scm_hosts_ro := {
+  "github.com",
+  "api.github.com",
+  "raw.githubusercontent.com",
+  "gitlab.com",
+  "api.gitlab.com",
+  "bitbucket.org",
+  "dev.azure.com",
+}
+
+# Future: Hosts where we allow full read/write, from user config
+# trusted_rw_hosts := { h | h := input.config.trusted_rw_hosts[_] }
+
+# Future: Hosts where we allow more permissive reads (e.g. GET with body/auth)
+# trusted_ro_hosts := { h | h := input.config.trusted_ro_hosts[_] }
+
+method_is_read_only(method) if {
+  method == "GET"
+}
+
+method_is_read_only(method) if {
+  method == "HEAD"
+}
+
+has_body if {
+  input.body != ""
+}
+
+# Future: Check for auth headers when headers are available in input
+# has_auth_header if {
+#   input.headers["authorization"] != ""
+# }
+# has_auth_header if {
+#   input.headers["x-api-key"] != ""
+# }
+
+############################
+# Allow rules
+############################
+
+# 1) Fully trusted hosts (LLM providers)
+allow if {
+  input.upstream_host in llm_hosts
+}
+
+# Future: Allow configured RW hosts
 # allow if {
-#     input.host == "api.anthropic.com"
+#   input.upstream_host in trusted_rw_hosts
 # }
 
-# Example: Allow only GET and POST methods
+# 2) Source control + code hosting: read-only, no body
+allow if {
+  input.upstream_host in scm_hosts_ro
+  method_is_read_only(input.method)
+  not has_body
+}
+
+# Future: Trusted read-only hosts (user-configured)
 # allow if {
-#     input.method in ["GET", "POST", "CONNECT"]
+#   input.upstream_host in trusted_ro_hosts
+#   method_is_read_only(input.method)
 # }
 
-# Example: Block DELETE operations
-# allow := false if {
-#     input.method == "DELETE"
-# }
+# 3) Everything else on the Internet:
+#    GET/HEAD only, no body
+#    Future: also check for no auth headers to prevent credential leakage
+allow if {
+  not (input.upstream_host in llm_hosts)
+  not (input.upstream_host in scm_hosts_ro)
+  # Future: not (input.upstream_host in trusted_rw_hosts)
+  # Future: not (input.upstream_host in trusted_ro_hosts)
+
+  method_is_read_only(input.method)
+  not has_body
+  # Future: not has_auth_header
+}
 `
 
 var initCmd = &cobra.Command{
