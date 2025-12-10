@@ -81,17 +81,28 @@ func startWithPTY(cmd *exec.Cmd, profilePath string) (*Process, error) {
 		return nil, fmt.Errorf("failed to start with pty: %w", err)
 	}
 
+	// Done channel to signal goroutines to exit
+	done := make(chan struct{})
+
 	// Handle terminal resize
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGWINCH)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGWINCH)
 	go func() {
-		for range ch {
-			if err := pty.InheritSize(os.Stdin, ptmx); err != nil {
-				// Ignore errors - terminal might not support resize
+		for {
+			select {
+			case <-done:
+				return
+			case _, ok := <-sigCh:
+				if !ok {
+					return
+				}
+				if err := pty.InheritSize(os.Stdin, ptmx); err != nil {
+					// Ignore errors - terminal might not support resize
+				}
 			}
 		}
 	}()
-	ch <- syscall.SIGWINCH // Initial resize
+	sigCh <- syscall.SIGWINCH // Initial resize
 
 	// Set stdin to raw mode for proper terminal handling
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
@@ -100,7 +111,8 @@ func startWithPTY(cmd *exec.Cmd, profilePath string) (*Process, error) {
 		oldState = nil
 	}
 
-	// Copy stdin to pty
+	// Copy stdin to pty with cancellation support
+	// When done is closed, ptmx.Close() will unblock the io.Copy
 	go func() {
 		io.Copy(ptmx, os.Stdin)
 	}()
@@ -112,9 +124,18 @@ func startWithPTY(cmd *exec.Cmd, profilePath string) (*Process, error) {
 		Stderr: io.NopCloser(&nilReader{}), // PTY combines stdout/stderr
 		Wait: func() error {
 			err := cmd.Wait()
+
+			// Signal goroutines to stop first (before closing channels)
+			close(done)
+
+			// Stop receiving signals, then close channel
+			signal.Stop(sigCh)
+
+			// Close ptmx to unblock any io.Copy operations
+			ptmx.Close()
+
+			// Cleanup
 			os.Remove(profilePath)
-			signal.Stop(ch)
-			close(ch)
 			if oldState != nil {
 				term.Restore(int(os.Stdin.Fd()), oldState)
 			}

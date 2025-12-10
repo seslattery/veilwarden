@@ -40,6 +40,7 @@ var (
 	execSandbox    bool
 	execVerbose    bool
 	execPort       int
+	execLogFile    string
 )
 
 func init() {
@@ -50,19 +51,14 @@ func init() {
 	execCmd.Flags().Bool("no-sandbox", false, "Disable sandbox even if enabled in config")
 	execCmd.Flags().BoolVar(&execVerbose, "verbose", false, "Show proxy logs for debugging")
 	execCmd.Flags().IntVar(&execPort, "port", 0, "Proxy listen port (0 = random)")
+	execCmd.Flags().StringVar(&execLogFile, "log-file", "", "Write proxy logs to file (default: .veilwarden/proxy.log when verbose)")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Handle interrupt signals
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		cancel()
-	}()
+	// Use signal.NotifyContext for clean signal handling without goroutine leaks
+	// This automatically stops signal handling when the context is cancelled
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	// Discover or load configuration
 	configPath := execConfigPath
@@ -120,10 +116,18 @@ func runExec(cmd *cobra.Command, args []string) error {
 		sandboxBackend = backend
 	}
 
+	// Determine log file path
+	logFile := execLogFile
+	if logFile == "" && execVerbose && cfg.ConfigDir() != "" {
+		// Default to .veilwarden/proxy.log when verbose is enabled
+		logFile = cfg.ConfigDir() + "/proxy.log"
+	}
+
 	// Run the command through the proxy
 	return exec.Run(ctx, cfg, args, sandboxBackend, exec.Options{
 		Verbose: execVerbose,
 		Port:    execPort,
+		LogFile: logFile,
 	})
 }
 

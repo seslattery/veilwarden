@@ -488,8 +488,8 @@ header "Building Binaries"
 mkdir -p "${BIN_DIR}" "${POLICY_DIR}" "${SANDBOX_PROJECT}" "${SANDBOX_DATA}"
 cd "${ROOT}"
 
-go build -o "${BIN_DIR}/veil" ./cmd/veil && pass "Built veil" || { fail "Build failed"; exit 1; }
-go build -o "${BIN_DIR}/echo" ./cmd/echo && pass "Built echo server" || { fail "Build failed"; exit 1; }
+go build -buildvcs=false -o "${BIN_DIR}/veil" ./cmd/veil && pass "Built veil" || { fail "Build failed"; exit 1; }
+go build -buildvcs=false -o "${BIN_DIR}/echo" ./cmd/echo && pass "Built echo server" || { fail "Build failed"; exit 1; }
 
 # Start echo server
 ECHO_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')

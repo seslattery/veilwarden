@@ -48,6 +48,9 @@ func generateSeatbeltProfile(cfg *Config) (string, error) {
 }
 
 func buildProfileData(cfg *Config) (*profileData, error) {
+	// TODO: cfg.AllowedReadPaths is not yet implemented. Currently, the workaround
+	// is to add paths to AllowedWritePaths, which grants read access via
+	// DotfileReadExceptions for home directory dotfiles.
 	data := &profileData{
 		AllowedUnixSockets: cfg.AllowedUnixSockets,
 		EnablePTY:          cfg.EnablePTY,

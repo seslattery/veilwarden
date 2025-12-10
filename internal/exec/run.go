@@ -11,6 +11,7 @@ import (
 	"os"
 	osexec "os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seslattery/veilwarden/internal/cert"
@@ -26,6 +27,7 @@ import (
 type Options struct {
 	Verbose bool
 	Port    int
+	LogFile string // Path to write proxy logs (empty = stderr when verbose, discard otherwise)
 }
 
 // Run executes a command through the VeilWarden proxy.
@@ -107,9 +109,22 @@ func Run(ctx context.Context, cfg *config.Config, args []string, sandboxBackend 
 		fmt.Fprintf(os.Stderr, "Proxy URL: %s\n", proxyURL)
 	}
 
-	// Create proxy server
+	// Create proxy server logger
 	var logger *slog.Logger
-	if opts.Verbose {
+	var logFile *os.File
+	if opts.LogFile != "" {
+		// Write logs to file
+		var err error
+		logFile, err = os.OpenFile(opts.LogFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if err != nil {
+			return fmt.Errorf("failed to open log file %s: %w", opts.LogFile, err)
+		}
+		defer logFile.Close()
+		logger = slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		if opts.Verbose {
+			fmt.Fprintf(os.Stderr, "Proxy logs: %s\n", opts.LogFile)
+		}
+	} else if opts.Verbose {
 		logger = slog.Default()
 	} else {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -167,18 +182,37 @@ func Run(ctx context.Context, cfg *config.Config, args []string, sandboxBackend 
 		cmdErr = childCmd.Run()
 	}
 
-	if cmdErr != nil {
-		// Check if proxy errored
-		select {
-		case proxyErr := <-proxyErrChan:
-			return fmt.Errorf("proxy error: %w (command also failed: %v)", proxyErr, cmdErr)
-		default:
-			// Extract exit code from ExitError and propagate it
-			if exitErr, ok := cmdErr.(*osexec.ExitError); ok {
-				os.Exit(exitErr.ExitCode())
+	// Gracefully shutdown the proxy to prevent goroutine leaks.
+	// Close the listener first to immediately stop accepting new connections,
+	// then signal the proxy to finish in-flight requests.
+	proxyListener.Close()
+	proxyServer.Close()
+
+	// Wait for proxy goroutine to exit (with timeout to prevent hangs).
+	// This should complete nearly instantly since we've closed the listener.
+	// The timeout is just a safety net for pathological cases.
+	proxyTimeout := 250 * time.Millisecond
+
+	select {
+	case proxyErr := <-proxyErrChan:
+		// Proxy exited - check if it was an error vs normal shutdown
+		if proxyErr != nil && cmdErr == nil {
+			// Proxy error is only relevant if command succeeded
+			// (closed listener returns "use of closed network connection" which is expected)
+			if !strings.Contains(proxyErr.Error(), "use of closed network connection") {
+				return fmt.Errorf("proxy error: %w", proxyErr)
 			}
-			return fmt.Errorf("command failed: %w", cmdErr)
 		}
+	case <-time.After(proxyTimeout):
+		// Proxy didn't exit in time - continue with cleanup
+	}
+
+	if cmdErr != nil {
+		// Extract exit code from ExitError and propagate it
+		if exitErr, ok := cmdErr.(*osexec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		return fmt.Errorf("command failed: %w", cmdErr)
 	}
 
 	return nil
@@ -246,15 +280,22 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		return fmt.Errorf("sandbox start failed: %w", err)
 	}
 
+	// WaitGroup to track output copier goroutines
+	// We need to wait for them to finish draining output before returning
+	var outputWg sync.WaitGroup
+
 	// For PTY mode, stdin is handled by the backend and stdout/stderr are combined
 	// For pipe mode, we need to copy all three streams
 	if cfg.Sandbox.EnablePTY {
 		// PTY mode: just copy the combined output to stdout
+		outputWg.Add(1)
 		go func() {
+			defer outputWg.Done()
 			io.Copy(os.Stdout, proc.Stdout)
 		}()
 	} else {
 		// Pipe mode: copy all streams
+		// stdin copier doesn't need to be waited on - it runs until stdin closes or process exits
 		go func() {
 			if _, err := io.Copy(proc.Stdin, os.Stdin); err != nil {
 				if err != io.EOF && !strings.Contains(err.Error(), "closed") {
@@ -264,7 +305,10 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 			proc.Stdin.Close()
 		}()
 
+		// stdout and stderr copiers need to drain all output before we return
+		outputWg.Add(2)
 		go func() {
+			defer outputWg.Done()
 			if _, err := io.Copy(os.Stdout, proc.Stdout); err != nil {
 				if err != io.EOF && !strings.Contains(err.Error(), "closed") {
 					fmt.Fprintf(os.Stderr, "veil: stdout pipe error: %v\n", err)
@@ -272,6 +316,7 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 			}
 		}()
 		go func() {
+			defer outputWg.Done()
 			if _, err := io.Copy(os.Stderr, proc.Stderr); err != nil {
 				if err != io.EOF && !strings.Contains(err.Error(), "closed") {
 					fmt.Fprintf(os.Stderr, "veil: stderr pipe error: %v\n", err)
@@ -280,8 +325,28 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		}()
 	}
 
-	// Wait for completion
-	return proc.Wait()
+	// Wait for process to complete
+	procErr := proc.Wait()
+
+	// Wait for output copiers to finish draining.
+	// This should complete nearly instantly since the pty/pipes close when the process exits.
+	// The timeout is just a safety net for pathological cases.
+	outputDone := make(chan struct{})
+	go func() {
+		outputWg.Wait()
+		close(outputDone)
+	}()
+
+	outputTimeout := 250 * time.Millisecond
+
+	select {
+	case <-outputDone:
+		// Output copiers finished normally
+	case <-time.After(outputTimeout):
+		// Timeout - output copiers are stuck, continue anyway
+	}
+
+	return procErr
 }
 
 func buildPolicyEngine(cfg *config.Config) (proxy.PolicyEngine, error) {

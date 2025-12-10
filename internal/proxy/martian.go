@@ -49,9 +49,44 @@ func (rt *policyEnforcingRoundTripper) RoundTrip(req *http.Request) (*http.Respo
 			"host", req.URL.Host,
 			"path", req.URL.Path,
 			"reason", blocked.reason)
-		return nil, fmt.Errorf("%w: %s", ErrPolicyBlocked, blocked.reason)
+		// Return a synthetic 403 Forbidden response instead of an error.
+		// Returning an error would cause martian to send a 502 Bad Gateway,
+		// which doesn't convey the policy denial semantically.
+		body := fmt.Sprintf(`{"error":"forbidden","reason":%q}`, blocked.reason)
+		return &http.Response{
+			StatusCode:    http.StatusForbidden,
+			Status:        "403 Forbidden",
+			Proto:         req.Proto,
+			ProtoMajor:    req.ProtoMajor,
+			ProtoMinor:    req.ProtoMinor,
+			Body:          io.NopCloser(strings.NewReader(body)),
+			ContentLength: int64(len(body)),
+			Header: http.Header{
+				"Content-Type":           []string{"application/json"},
+				"X-Veilwarden-Blocked":   []string{"policy"},
+				"X-Veilwarden-Reason":    []string{blocked.reason},
+			},
+			Request: req,
+		}, nil
 	}
-	return rt.wrapped.RoundTrip(req)
+
+	// Debug logging to diagnose DNS issues after sleep/wake.
+	// The [::]:443 error indicates DNS resolution returning empty results.
+	rt.logger.Debug("round trip starting",
+		"scheme", req.URL.Scheme,
+		"host", req.URL.Host,
+		"path", req.URL.Path,
+		"req_host_header", req.Host)
+
+	resp, err := rt.wrapped.RoundTrip(req)
+	if err != nil {
+		// Log detailed error info for DNS/dial failures
+		rt.logger.Debug("round trip failed",
+			"error", err.Error(),
+			"host", req.URL.Host,
+			"scheme", req.URL.Scheme)
+	}
+	return resp, err
 }
 
 const (
@@ -59,6 +94,17 @@ const (
 	// for policy evaluation. This prevents DoS attacks via large request bodies.
 	// Default: 1MB - sufficient for most API requests
 	MaxPolicyBodySize = 1 * 1024 * 1024 // 1 MB
+
+	// Connection pool settings to prevent hangs after system sleep/wake.
+	// See: https://github.com/golang/go/issues/29308
+	//
+	// After system sleep, cached TCP connections become stale but the transport
+	// doesn't know until it tries to use them. Aggressive timeouts and keepalive
+	// settings help detect and recover from this condition quickly.
+	idleConnTimeout    = 10 * time.Second // Close idle connections quickly
+	tcpKeepAlive       = 5 * time.Second  // Detect dead connections faster
+	tlsHandshakeTimeout = 10 * time.Second
+	responseHeaderTimeout = 30 * time.Second
 )
 
 // filteredMartianLogger wraps slog to filter out benign connection errors from martian.
@@ -69,7 +115,13 @@ type filteredMartianLogger struct {
 }
 
 func (l *filteredMartianLogger) Infof(format string, args ...interface{}) {
-	l.logger.Info(fmt.Sprintf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	// Filter noisy martian internal messages that are logged for every HTTPS request
+	if strings.Contains(msg, "forcing HTTPS inside secure session") {
+		l.logger.Debug(msg)
+		return
+	}
+	l.logger.Info(msg)
 }
 
 func (l *filteredMartianLogger) Debugf(format string, args ...interface{}) {
@@ -116,16 +168,133 @@ type MartianConfig struct {
 	PolicyEngine   PolicyEngine
 	Logger         *slog.Logger
 	TimeoutSeconds int // Proxy timeout in seconds. Default: 300 (5 minutes)
+	// Note: Martian doesn't expose idle timeout configuration. Connection cleanup
+	// is handled by the graceful shutdown mechanism in Close() which completes
+	// in-flight requests before closing connections.
 }
 
 // MartianProxy wraps a Martian proxy with VeilWarden configuration.
 type MartianProxy struct {
 	proxy        *martian.Proxy
+	transport    *http.Transport // Custom transport for connection management
 	sessionID    string
 	policyEngine PolicyEngine
 	secretStore  SecretStore
 	routes       map[string]Route
 	logger       *slog.Logger
+}
+
+// dnsRetryDialer wraps a net.Dialer to retry DNS resolution on failure.
+// This handles macOS mDNSResponder issues after sleep/wake where DNS
+// queries can fail transiently with empty results (causing dial tcp [::]:443 errors).
+type dnsRetryDialer struct {
+	dialer     *net.Dialer
+	resolver   *net.Resolver
+	logger     *slog.Logger
+	maxRetries int
+	retryDelay time.Duration
+}
+
+// DialContext dials with DNS pre-resolution and retry logic.
+// If DNS resolution fails, it retries a few times before giving up.
+func (d *dnsRetryDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		// If we can't split, fall back to standard dial
+		return d.dialer.DialContext(ctx, network, address)
+	}
+
+	// Skip DNS pre-resolution for IP addresses
+	if ip := net.ParseIP(host); ip != nil {
+		return d.dialer.DialContext(ctx, network, address)
+	}
+
+	// Pre-resolve DNS with retry logic to handle mDNSResponder issues after sleep
+	var addrs []string
+	var lastErr error
+	for attempt := 0; attempt <= d.maxRetries; attempt++ {
+		if attempt > 0 {
+			if d.logger != nil {
+				d.logger.Debug("retrying DNS resolution",
+					"host", host,
+					"attempt", attempt,
+					"last_error", lastErr)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(d.retryDelay):
+			}
+		}
+
+		addrs, lastErr = d.resolver.LookupHost(ctx, host)
+		if lastErr == nil && len(addrs) > 0 {
+			break
+		}
+		if lastErr == nil {
+			lastErr = fmt.Errorf("DNS returned no addresses for %s", host)
+		}
+	}
+
+	if lastErr != nil || len(addrs) == 0 {
+		if d.logger != nil {
+			d.logger.Warn("DNS resolution failed after retries",
+				"host", host,
+				"error", lastErr,
+				"retries", d.maxRetries)
+		}
+		errMsg := "DNS resolution failed"
+		if lastErr != nil {
+			errMsg = lastErr.Error()
+		}
+		return nil, fmt.Errorf("DNS lookup for %s: %s (possible mDNSResponder issue after sleep - try flushing DNS cache)", host, errMsg)
+	}
+
+	// Try each resolved address
+	for _, addr := range addrs {
+		target := net.JoinHostPort(addr, port)
+		conn, err := d.dialer.DialContext(ctx, network, target)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+
+	return nil, lastErr
+}
+
+// newResilientTransportWithDialer creates an HTTP transport configured to handle
+// system sleep/wake gracefully. After sleep, TCP connections become stale
+// but Go's connection pool doesn't detect this until requests fail.
+//
+// This transport uses aggressive settings to minimize hang time:
+// - Short idle connection timeout (connections expire quickly when unused)
+// - Aggressive TCP keepalive (detects dead connections faster)
+// - Disabled connection pooling (each request gets a fresh connection)
+// - DNS pre-resolution with retry to handle mDNSResponder issues after sleep
+//
+// The dialer should be shared with proxy.SetDial() to ensure CONNECT tunnels
+// and HTTP requests both benefit from DNS retry logic.
+func newResilientTransportWithDialer(logger *slog.Logger, dnsDialer *dnsRetryDialer) *http.Transport {
+	return &http.Transport{
+		// Disable connection pooling entirely to prevent stale connection issues.
+		// This means each request creates a new TCP connection, but eliminates
+		// the class of bugs where pooled connections become stale after sleep.
+		DisableKeepAlives: true,
+
+		// Even with DisableKeepAlives, set short timeouts as defense-in-depth
+		IdleConnTimeout:       idleConnTimeout,
+		TLSHandshakeTimeout:   tlsHandshakeTimeout,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+
+		// Use custom dialer with DNS retry logic for sleep/wake resilience
+		DialContext: dnsDialer.DialContext,
+
+		// Limit concurrent connections to prevent resource exhaustion
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		MaxConnsPerHost:     100,
+	}
 }
 
 // NewMartianProxy creates a new Martian MITM proxy.
@@ -160,22 +329,47 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 	}
 	proxy.SetTimeout(timeout)
 
-	// Wrap the default RoundTripper with policy enforcement
+	// Create DNS retry dialer for mDNSResponder resilience after sleep/wake.
+	// This must be set on BOTH the proxy (for CONNECT tunnels) AND the transport
+	// (for HTTP requests) since they use different dial paths.
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: tcpKeepAlive,
+	}
+	dnsDialer := &dnsRetryDialer{
+		dialer:     dialer,
+		resolver:   net.DefaultResolver,
+		logger:     cfg.Logger,
+		maxRetries: 3,             // Increased from 2 - mDNSResponder can be slow
+		retryDelay: 200 * time.Millisecond, // Increased from 100ms for more reliability
+	}
+
+	// Set dialer on proxy for CONNECT tunnels (HTTPS connections)
+	proxy.SetDial(func(network, addr string) (net.Conn, error) {
+		return dnsDialer.DialContext(context.Background(), network, addr)
+	})
+
+	// Create a resilient transport that handles system sleep/wake gracefully.
+	// This replaces http.DefaultTransport to prevent stale connection hangs.
+	transport := newResilientTransportWithDialer(cfg.Logger, dnsDialer)
+
+	// Set the transport as the base RoundTripper
+	var rt http.RoundTripper = transport
+
+	// Wrap with policy enforcement if configured
 	// This is necessary because martian converts modifier errors to warning headers
 	// rather than actually blocking requests
 	if cfg.PolicyEngine != nil {
-		defaultRT := proxy.GetRoundTripper()
-		if defaultRT == nil {
-			defaultRT = http.DefaultTransport
-		}
-		proxy.SetRoundTripper(&policyEnforcingRoundTripper{
-			wrapped: defaultRT,
+		rt = &policyEnforcingRoundTripper{
+			wrapped: rt,
 			logger:  cfg.Logger,
-		})
+		}
 	}
+	proxy.SetRoundTripper(rt)
 
 	s := &MartianProxy{
 		proxy:        proxy,
+		transport:    transport,
 		sessionID:    cfg.SessionID,
 		policyEngine: cfg.PolicyEngine,
 		secretStore:  cfg.SecretStore,
@@ -220,6 +414,21 @@ func (s *MartianProxy) registerModifiers() {
 func (s *MartianProxy) Serve(listener net.Listener) error {
 	s.logger.Info("martian proxy listening", "addr", listener.Addr().String())
 	return s.proxy.Serve(listener)
+}
+
+// Close gracefully shuts down the proxy, allowing in-flight requests to complete.
+// It signals the proxy to stop accepting new connections and waits for existing
+// connections to finish. This prevents goroutine leaks and ensures clean shutdown.
+func (s *MartianProxy) Close() {
+	s.logger.Info("shutting down martian proxy")
+
+	// Close idle connections first to speed up shutdown.
+	// This is especially important after system sleep when connections may be stale.
+	if s.transport != nil {
+		s.transport.CloseIdleConnections()
+	}
+
+	s.proxy.Close()
 }
 
 // policyModifier enforces policies on requests.

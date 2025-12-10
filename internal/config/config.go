@@ -54,9 +54,11 @@ type SandboxEntry struct {
 	WorkingDir        string   `yaml:"working_dir,omitempty"`
 	AllowedWritePaths []string `yaml:"allowed_write_paths,omitempty"`
 	DeniedReadPaths   []string `yaml:"denied_read_paths,omitempty"`
-	AllowedReadPaths  []string `yaml:"allowed_read_paths,omitempty"`
-	EnvPassthrough    []string `yaml:"env_passthrough,omitempty"`
-	EnablePTY         bool     `yaml:"enable_pty,omitempty"`
+	// AllowedReadPaths: TODO not yet implemented in seatbelt. Workaround: use
+	// AllowedWritePaths instead (write paths get read access for dotfiles).
+	AllowedReadPaths []string `yaml:"allowed_read_paths,omitempty"`
+	EnvPassthrough   []string `yaml:"env_passthrough,omitempty"`
+	EnablePTY        bool     `yaml:"enable_pty,omitempty"`
 }
 
 // ProxyEntry configures proxy behavior.

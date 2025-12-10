@@ -52,6 +52,8 @@ sandbox:
     - /var/tmp
     - ~/.claude.json            # Claude Code state
     - ~/.claude                 # Claude Code data
+    - ~/.config/git             # Git config (needed for plugin clone)
+    - ~/.config/superpowers     # Superpowers plugin legacy check (read access)
     - ~/Library/Caches/go-build # Go build cache for Go tools
 
   # Reads:
@@ -63,8 +65,6 @@ sandbox:
     # Home-level secrets (redundant with ~/.* default, but explicit is fine)
     - ~/.ssh
     - ~/.aws
-    - ~/.config
-    - ~/.config/gcloud
     - ~/.azure
     - ~/.kube
     - ~/.docker
@@ -76,13 +76,15 @@ sandbox:
     - ~/.git-credentials
     - ~/.npmrc
     - ~/.pypirc
+    # ~/.config subdirs with secrets (don't block all of ~/.config - breaks git/plugins)
+    - ~/.config/gcloud
     - ~/.config/gh          # GitHub CLI hosts/tokens
     - ~/.config/hub         # Older GitHub tool
 
-    # macOS keychains
-    - ~/Library/Keychains
-    - /Library/Keychains
-    - /System/Library/Keychains
+    # macOS keychains - commented out to allow Claude Code OAuth
+    # - ~/Library/Keychains
+    # - /Library/Keychains
+    # - /System/Library/Keychains
 
     # Browsers – cookies, sessions, OAuth tokens, etc.
     - ~/Library/Application Support/Google/Chrome
