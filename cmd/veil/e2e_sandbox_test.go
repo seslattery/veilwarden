@@ -102,11 +102,6 @@ allow if { input.method == "GET"; startswith(input.path, "/api/") }
 func detectAvailableBackends() []string {
 	var backends []string
 
-	// Check for srt/anthropic backend
-	if _, err := exec.LookPath("srt"); err == nil {
-		backends = append(backends, "srt")
-	}
-
 	// Check for seatbelt backend (macOS only)
 	if _, err := exec.LookPath("sandbox-exec"); err == nil {
 		backends = append(backends, "seatbelt")
@@ -643,7 +638,6 @@ func setDopplerSecrets(t *testing.T, token, project, config string, secrets map[
 
 // TestExitCodePropagation verifies that exit codes from sandboxed commands
 // are properly propagated to the parent process.
-// NOTE: srt backend does NOT propagate exit codes (upstream limitation).
 func TestExitCodePropagation(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
@@ -655,7 +649,6 @@ func TestExitCodePropagation(t *testing.T) {
 	}
 
 	// Only test with seatbelt backend which properly propagates exit codes
-	// srt backend doesn't propagate exit codes (upstream limitation)
 	if _, err := exec.LookPath("sandbox-exec"); err != nil {
 		t.Skip("seatbelt (sandbox-exec) not available")
 	}
@@ -1060,8 +1053,7 @@ sandbox:
 
 	countVeilTempFiles := func() int {
 		matches, _ := filepath.Glob("/tmp/veil-*")
-		srtMatches, _ := filepath.Glob("/tmp/srt-*")
-		return len(matches) + len(srtMatches)
+		return len(matches)
 	}
 
 	t.Run("SuccessfulCommand", func(t *testing.T) {

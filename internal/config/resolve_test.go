@@ -116,13 +116,13 @@ func TestApplyDefaults_PreservesExistingValues(t *testing.T) {
 	cfg := &Config{
 		Sandbox: &SandboxEntry{
 			Enabled: false, // Explicitly disabled
-			Backend: "srt",
+			Backend: "seatbelt",
 		},
 	}
 	cfg.ApplyDefaults()
 
 	assert.False(t, cfg.Sandbox.Enabled) // Should stay false
-	assert.Equal(t, "srt", cfg.Sandbox.Backend)
+	assert.Equal(t, "seatbelt", cfg.Sandbox.Backend)
 }
 
 func TestApplyDefaults_FillsEmptyBackend(t *testing.T) {

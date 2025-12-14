@@ -20,7 +20,7 @@ test-veil:
     @echo "Running veil CLI tests..."
     go test -v ./cmd/veil/...
 
-# Run sandbox e2e tests (requires DOPPLER_TOKEN and srt)
+# Run sandbox e2e tests (requires DOPPLER_TOKEN)
 test-e2e:
     @echo "Running sandbox E2E tests..."
     go test -v -run TestE2ESandbox ./cmd/veil/...

@@ -83,11 +83,6 @@ wait_for_http() {
 detect_backends() {
     BACKENDS_TO_TEST=""
 
-    # Check for srt/anthropic backend
-    if command -v srt >/dev/null 2>&1; then
-        BACKENDS_TO_TEST="${BACKENDS_TO_TEST} srt"
-    fi
-
     # Check for seatbelt backend (macOS only)
     if [[ "$(uname)" == "Darwin" ]] && command -v sandbox-exec >/dev/null 2>&1; then
         BACKENDS_TO_TEST="${BACKENDS_TO_TEST} seatbelt"
@@ -113,7 +108,6 @@ create_backend_config() {
     local config_file="${TEST_DIR}/config-${backend}.yaml"
 
     # All backends on macOS use the same config format (seatbelt-style)
-    # srt on macOS uses sandbox-exec under the hood, same as seatbelt
     cat > "${config_file}" << EOF
 routes:
   - host: "postman-echo.com"
@@ -166,7 +160,7 @@ run_backend_tests() {
     config_file=$(create_backend_config "${backend}")
     info "Config: ${config_file}"
 
-    # All backends use host paths on macOS (srt uses sandbox-exec, same as seatbelt)
+    # All backends use host paths on macOS
     script_path="${SANDBOX_PROJECT}"
     data_path="${SANDBOX_DATA}"
 
@@ -468,8 +462,8 @@ detect_backends
 if [[ -z "${BACKENDS_TO_TEST}" ]]; then
     fail "No sandbox backends available!"
     echo "Install at least one:"
-    echo "  - srt: npm install -g @anthropic-ai/srt"
     echo "  - seatbelt: available on macOS by default"
+    echo "  - bubblewrap: available on Linux"
     exit 1
 fi
 

@@ -13,7 +13,7 @@ Run AI agents in isolated sandboxes with VeilWarden.
 
 2. **Sandbox backend** (one of):
    - **macOS**: Built-in `sandbox-exec` (no installation needed)
-   - **srt**: [Anthropic sandbox-runtime](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) (`npm install -g @anthropic-ai/sandbox-runtime`)
+   - **Linux**: `bubblewrap` (coming soon)
 
 ## Quick Start
 
@@ -30,7 +30,7 @@ routes:
 
 sandbox:
   enabled: true
-  backend: auto                    # auto, seatbelt, or srt
+  backend: auto                    # auto, seatbelt, or bubblewrap
   working_dir: ~/my-project
   allowed_write_paths:
     - ~/my-project
@@ -68,9 +68,8 @@ The agent runs inside a sandbox with:
 
 | Backend | OS | Description |
 |---------|-----|-------------|
-| `auto` | macOS/Linux | Best available (seatbelt on macOS) |
+| `auto` | macOS/Linux | Best available (seatbelt on macOS, bubblewrap on Linux) |
 | `seatbelt` | macOS only | Uses `sandbox-exec` |
-| `srt` | macOS | Anthropic sandbox-runtime |
 | `bubblewrap` | Linux | Uses `bwrap` (coming soon) |
 
 ## Configuration Options
@@ -81,7 +80,7 @@ sandbox:
   enabled: true
 
   # Backend selection
-  backend: auto  # auto | seatbelt | srt
+  backend: auto  # auto | seatbelt | bubblewrap
 
   # Working directory for the agent
   working_dir: ~/my-project
@@ -140,12 +139,6 @@ veil exec --verbose -- python agent.py
 
 ### "sandbox-exec not found" (macOS)
 This is built into macOS. If missing, your PATH may be misconfigured.
-
-### "srt not found"
-```bash
-npm install -g @anthropic-ai/sandbox-runtime
-which srt
-```
 
 ### "permission denied" on working directory
 Ensure the directory exists and is writable:

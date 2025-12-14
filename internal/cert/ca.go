@@ -22,7 +22,7 @@ type EphemeralCA struct {
 }
 
 // GenerateEphemeralCA creates a new ephemeral CA certificate and key.
-// The certificate is valid for 1 hour and is written to a temp file.
+// The certificate is valid for 5 days and is written to a temp file.
 func GenerateEphemeralCA(sessionID string) (*EphemeralCA, error) {
 	// Generate RSA key for CA
 	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -43,7 +43,7 @@ func GenerateEphemeralCA(sessionID string) (*EphemeralCA, error) {
 			CommonName: fmt.Sprintf("VeilWarden Ephemeral CA %s", sessionID[:8]),
 		},
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(1 * time.Hour),
+		NotAfter:              time.Now().Add(5 * 24 * time.Hour),
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,

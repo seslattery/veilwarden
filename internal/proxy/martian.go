@@ -299,12 +299,16 @@ func newResilientTransportWithDialer(logger *slog.Logger, dnsDialer *dnsRetryDia
 
 // NewMartianProxy creates a new Martian MITM proxy.
 func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	if cfg.SessionID != "" {
+		logger = logger.With("session_id", cfg.SessionID)
 	}
 
 	// Configure martian's internal logger to filter benign connection errors
-	martianlog.SetLogger(&filteredMartianLogger{logger: cfg.Logger})
+	martianlog.SetLogger(&filteredMartianLogger{logger: logger})
 
 	// Create Martian proxy
 	proxy := martian.NewProxy()
@@ -316,7 +320,7 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 			return nil, fmt.Errorf("failed to create MITM config: %w", err)
 		}
 
-		mc.SetValidity(1 * time.Hour)
+		mc.SetValidity(5 * 24 * time.Hour)
 		mc.SetOrganization("VeilWarden MITM")
 
 		proxy.SetMITM(mc)
@@ -339,7 +343,7 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 	dnsDialer := &dnsRetryDialer{
 		dialer:     dialer,
 		resolver:   net.DefaultResolver,
-		logger:     cfg.Logger,
+		logger:     logger,
 		maxRetries: 3,             // Increased from 2 - mDNSResponder can be slow
 		retryDelay: 200 * time.Millisecond, // Increased from 100ms for more reliability
 	}
@@ -351,7 +355,7 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 
 	// Create a resilient transport that handles system sleep/wake gracefully.
 	// This replaces http.DefaultTransport to prevent stale connection hangs.
-	transport := newResilientTransportWithDialer(cfg.Logger, dnsDialer)
+	transport := newResilientTransportWithDialer(logger, dnsDialer)
 
 	// Set the transport as the base RoundTripper
 	var rt http.RoundTripper = transport
@@ -362,7 +366,7 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 	if cfg.PolicyEngine != nil {
 		rt = &policyEnforcingRoundTripper{
 			wrapped: rt,
-			logger:  cfg.Logger,
+			logger:  logger,
 		}
 	}
 	proxy.SetRoundTripper(rt)
@@ -374,7 +378,7 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 		policyEngine: cfg.PolicyEngine,
 		secretStore:  cfg.SecretStore,
 		routes:       cfg.Routes,
-		logger:       cfg.Logger,
+		logger:       logger,
 	}
 
 	// Register modifiers if configured

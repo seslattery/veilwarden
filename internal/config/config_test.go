@@ -241,7 +241,7 @@ routes:
 
 sandbox:
   enabled: true
-  backend: srt
+  backend: seatbelt
   working_dir: /workspace
   allowed_write_paths:
     - /workspace
@@ -261,7 +261,7 @@ sandbox:
 
 	require.NotNil(t, cfg.Sandbox)
 	assert.True(t, cfg.Sandbox.Enabled)
-	assert.Equal(t, "srt", cfg.Sandbox.Backend)
+	assert.Equal(t, "seatbelt", cfg.Sandbox.Backend)
 	assert.Equal(t, "/workspace", cfg.Sandbox.WorkingDir)
 
 	require.Len(t, cfg.Sandbox.AllowedWritePaths, 2)

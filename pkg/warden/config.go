@@ -32,21 +32,16 @@ type Config struct {
 	DeniedReadPaths []string
 
 	// AllowedReadPaths are additional paths the sandboxed process can read.
-	// NOTE: Only supported by seatbelt backend. SRT backend ignores this field
-	// (it allows reading all paths except DeniedReadPaths).
-	//
 	// TODO: Not yet implemented in seatbelt profile generator. As a workaround,
 	// add paths to AllowedWritePaths instead - write paths automatically get
 	// read access via DotfileReadExceptions for home directory dotfiles.
 	AllowedReadPaths []string
 
 	// AllowedHosts are domain names that the sandbox can make HTTP requests to.
-	// Required for SRT backend. These should include all hosts from routes config
-	// since SRT enforces domain-level restrictions even with httpProxyPort.
+	// These should include all hosts from routes config.
 	AllowedHosts []string
 
 	// AllowedUnixSockets are Unix socket paths the sandbox can access.
-	// NOTE: Only supported by seatbelt backend. SRT backend ignores this field.
 	// DANGEROUS: Only use if you understand the implications.
 	AllowedUnixSockets []string
 

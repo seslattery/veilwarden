@@ -63,7 +63,7 @@ func TestShouldUseSandbox(t *testing.T) {
 			if tt.configEnabled {
 				cfg.Sandbox = &config.SandboxEntry{
 					Enabled: true,
-					Backend: "srt",
+					Backend: "seatbelt",
 				}
 			}
 

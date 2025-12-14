@@ -289,6 +289,5 @@ opa eval -d ~/.veilwarden/policies -i input.json "data.veilwarden.authz.allow"
 veil exec --no-sandbox -- curl https://api.github.com/user
 
 # Check which backends are available
-which srt        # Anthropic sandbox-runtime
 which sandbox-exec  # macOS seatbelt
 ```

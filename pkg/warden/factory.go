@@ -12,8 +12,6 @@ var ValidBackends = map[string]bool{
 	"auto":       true,
 	"seatbelt":   true,
 	"bubblewrap": true,
-	"srt":        true,
-	"anthropic":  true,
 }
 
 // validBackendNames returns a sorted, comma-separated list of valid backend names.
@@ -27,7 +25,7 @@ func validBackendNames() string {
 }
 
 // NewBackend creates a sandbox backend by name.
-// Valid values: "auto", "seatbelt", "bubblewrap", "srt", "anthropic"
+// Valid values: "auto", "seatbelt", "bubblewrap"
 func NewBackend(backendType string) (Backend, error) {
 	if !ValidBackends[backendType] {
 		return nil, fmt.Errorf("unknown sandbox backend: %s (available: %s)",
@@ -41,8 +39,6 @@ func NewBackend(backendType string) (Backend, error) {
 		return newSeatbeltBackend()
 	case "bubblewrap":
 		return newBubblewrapBackend()
-	case "srt", "anthropic":
-		return newSrtBackend()
 	default:
 		// This should never happen due to ValidBackends check above
 		return nil, fmt.Errorf("unknown sandbox backend: %s", backendType)
@@ -73,8 +69,4 @@ func newBubblewrapBackend() (Backend, error) {
 	}
 	// TODO: Implement bubblewrap backend
 	return nil, fmt.Errorf("bubblewrap backend not yet implemented")
-}
-
-func newSrtBackend() (Backend, error) {
-	return NewSrtBackend()
 }

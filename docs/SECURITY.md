@@ -83,7 +83,7 @@ While secrets are unlikely to contain such characters, defense-in-depth requires
 
 **Implementation**:
 - Pluggable sandbox backend interface (`pkg/warden/`)
-- Multiple backends: `seatbelt` (macOS), `srt` (Anthropic sandbox-runtime), `bubblewrap` (Linux, coming soon)
+- Multiple backends: `seatbelt` (macOS), `bubblewrap` (Linux, coming soon)
 - `auto` backend selects best available for the platform
 - Path-based access control with `allowed_write_paths` and `denied_read_paths`
 - All network traffic forced through veil MITM proxy
@@ -99,7 +99,7 @@ Sandboxing provides defense-in-depth by isolating the filesystem.
 ```yaml
 sandbox:
   enabled: true
-  backend: auto  # auto | seatbelt | srt
+  backend: auto  # auto | seatbelt | bubblewrap
   working_dir: ~/my-project
   allowed_write_paths:
     - ~/my-project
@@ -122,7 +122,7 @@ sandbox:
 
 **Location**:
 - Interface: `pkg/warden/backend.go`
-- Backends: `pkg/warden/seatbelt.go`, `pkg/warden/srt.go`
+- Backends: `pkg/warden/seatbelt.go`
 - Tests: `cmd/veil/e2e_sandbox_test.go`
 
 ## Security Limitations

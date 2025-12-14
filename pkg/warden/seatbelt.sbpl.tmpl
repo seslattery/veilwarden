@@ -115,7 +115,12 @@
   (global-name "com.apple.logd")
   (global-name "com.apple.PowerManagement.control")
   (global-name "com.apple.audio.systemsoundserver")
-  (global-name "com.apple.sysmond"))
+  (global-name "com.apple.sysmond")
+  ;; Auth services for OAuth token refresh (Claude Code, etc.)
+  (global-name "com.apple.security.agent")              ;; Keychain UI prompts
+  (global-name "com.apple.CoreAuthentication.agent")    ;; Modern auth flows
+  (global-name "com.apple.cfnetwork.AuthBrokerAgent")   ;; Network auth broker
+  (global-name "com.apple.accountsd"))
 
 ;; User preferences (some libs check locale, etc.)
 (allow user-preference-read)

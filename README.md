@@ -260,7 +260,7 @@ Sandbox is **enabled by default** with sensible settings:
 ```yaml
 sandbox:
   enabled: true
-  backend: auto                    # auto | seatbelt | srt
+  backend: auto                    # auto | seatbelt | bubblewrap
   working_dir: .                   # Relative to config file
   allowed_write_paths:
     - .                            # Project directory
@@ -273,11 +273,11 @@ sandbox:
 
 ### Backends
 
-| Backend    | Platform    | Implementation                                                                                  |
-| ---------- | ----------- | ----------------------------------------------------------------------------------------------- |
-| `auto`     | macOS/Linux | Uses the native sandbox backend (recommended)                                                   |
-| `seatbelt` | macOS       | Uses `sandbox-exec` / seatbelt profiles                                                         |
-| `srt`      | Any         | Uses Anthropic's [sandbox-runtime](https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime) |
+| Backend      | Platform | Implementation                          |
+| ------------ | -------- | --------------------------------------- |
+| `auto`       | macOS/Linux | Uses the native sandbox backend (recommended) |
+| `seatbelt`   | macOS    | Uses `sandbox-exec` / seatbelt profiles |
+| `bubblewrap` | Linux    | Uses `bwrap` (coming soon)              |
 
 ### Environment Variable Stripping
 
@@ -382,7 +382,7 @@ just setup
 # Test
 just test          # All tests
 just test-veil     # CLI tests only
-just test-e2e      # E2E tests (requires DOPPLER_TOKEN + srt)
+just test-e2e      # E2E tests (requires DOPPLER_TOKEN)
 
 # Build
 just build         # Output: bin/veil
@@ -414,6 +414,5 @@ internal/                     # Private implementation
 pkg/warden/                   # Public sandbox API
 ├── config.go                 # Sandbox config types
 ├── backend.go                # Backend interface
-├── seatbelt.go               # macOS sandbox-exec backend
-└── srt.go                    # Anthropic SRT backend
+└── seatbelt.go               # macOS sandbox-exec backend
 ```

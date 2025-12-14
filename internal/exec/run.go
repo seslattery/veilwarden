@@ -226,7 +226,7 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		allowedReadPaths = append(allowedReadPaths, caCertPath)
 	}
 
-	// Extract hosts from routes for SRT backend allowedDomains
+	// Extract hosts from routes for sandbox allowedDomains
 	allowedHosts := make([]string, 0, len(cfg.Routes))
 	for _, r := range cfg.Routes {
 		allowedHosts = append(allowedHosts, r.Host)
@@ -262,7 +262,7 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		DeniedReadPaths:   cfg.Sandbox.DeniedReadPaths,
 		AllowedReadPaths:  allowedReadPaths,
 
-		// Network: hosts that can be accessed via proxy (for SRT backend)
+		// Network: hosts that can be accessed via proxy
 		AllowedHosts: allowedHosts,
 
 		// Terminal support for interactive CLIs
