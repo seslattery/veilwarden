@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/martian/v3"
@@ -19,6 +22,8 @@ import (
 	martianlog "github.com/google/martian/v3/log"
 	"github.com/google/martian/v3/mitm"
 )
+
+var martianLoggerOnce sync.Once
 
 // Context key for policy blocking
 type policyBlockedKeyType struct{}
@@ -130,7 +135,9 @@ func (l *filteredMartianLogger) Debugf(format string, args ...interface{}) {
 
 func (l *filteredMartianLogger) Errorf(format string, args ...interface{}) {
 	msg := fmt.Sprintf(format, args...)
-	if strings.Contains(msg, "broken pipe") || strings.Contains(msg, "connection reset by peer") {
+	// Use case-insensitive matching for connection error filtering
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "broken pipe") || strings.Contains(lower, "connection reset by peer") {
 		l.logger.Debug(msg)
 		return
 	}
@@ -307,20 +314,28 @@ func NewMartianProxy(cfg *MartianConfig) (*MartianProxy, error) {
 		logger = logger.With("session_id", cfg.SessionID)
 	}
 
-	// Configure martian's internal logger to filter benign connection errors
-	martianlog.SetLogger(&filteredMartianLogger{logger: logger})
+	// Configure martian's internal logger to filter benign connection errors.
+	// Use sync.Once to avoid data races when multiple proxies are created concurrently.
+	martianLoggerOnce.Do(func() {
+		martianlog.SetLogger(&filteredMartianLogger{logger: slog.Default()})
+	})
 
 	// Create Martian proxy
 	proxy := martian.NewProxy()
 
 	// Setup MITM if CA cert provided
 	if cfg.CACert != nil && cfg.CAKey != nil {
+		// Verify cert and key form a valid pair before using them
+		if err := validateCertKeyPair(cfg.CACert, cfg.CAKey); err != nil {
+			return nil, fmt.Errorf("certificate/key validation failed: %w", err)
+		}
+
 		mc, err := mitm.NewConfig(cfg.CACert, cfg.CAKey)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create MITM config: %w", err)
 		}
 
-		mc.SetValidity(5 * 24 * time.Hour)
+		mc.SetValidity(1 * time.Hour)
 		mc.SetOrganization("VeilWarden MITM")
 
 		proxy.SetMITM(mc)
@@ -484,13 +499,14 @@ func (m *policyModifier) ModifyRequest(req *http.Request) error {
 
 	// Build policy input
 	policyInput := PolicyInput{
-		Method:       req.Method,
-		Path:         req.URL.Path,
-		Query:        req.URL.RawQuery,
-		UpstreamHost: host,
-		SessionID:    m.sessionID,
-		Timestamp:    time.Now(),
-		Body:         string(bodyBytes),
+		Method:        req.Method,
+		Path:          req.URL.Path,
+		Query:         req.URL.RawQuery,
+		UpstreamHost:  host,
+		SessionID:     m.sessionID,
+		Timestamp:     time.Now(),
+		Body:          string(bodyBytes),
+		BodyTruncated: len(bodyBytes) == MaxPolicyBodySize,
 	}
 
 	// Evaluate policy
@@ -559,19 +575,18 @@ func (m *secretInjectorModifier) ModifyRequest(req *http.Request) error {
 	// Fetch secret from store
 	secret, err := m.secretStore.Get(ctx, route.SecretID)
 	if err != nil {
-		m.logger.Error("failed to fetch secret",
-			"secret_id", route.SecretID,
+		// Do not include secret_id in error logs - could leak info about secret naming
+		m.logger.Error("failed to fetch credential",
 			"host", host,
 			"error", err)
-		return fmt.Errorf("failed to fetch secret %s: %w", route.SecretID, err)
+		return fmt.Errorf("credential fetch failed: %w", err)
 	}
 
 	// Validate secret value to prevent header injection attacks
 	if !isValidHeaderValue(secret) {
-		m.logger.Error("secret contains invalid characters for HTTP header",
-			"secret_id", route.SecretID,
+		m.logger.Error("credential contains invalid characters for HTTP header",
 			"host", host)
-		return fmt.Errorf("secret %s contains invalid characters for HTTP header", route.SecretID)
+		return fmt.Errorf("credential contains invalid characters for HTTP header")
 	}
 
 	// Inject secret into header
@@ -580,7 +595,6 @@ func (m *secretInjectorModifier) ModifyRequest(req *http.Request) error {
 	// Validate final header value as well (in case template contains invalid chars)
 	if !isValidHeaderValue(headerValue) {
 		m.logger.Error("header value contains invalid characters",
-			"secret_id", route.SecretID,
 			"header", route.HeaderName,
 			"host", host)
 		return fmt.Errorf("header value for %s contains invalid characters", route.HeaderName)
@@ -588,10 +602,33 @@ func (m *secretInjectorModifier) ModifyRequest(req *http.Request) error {
 
 	req.Header.Set(route.HeaderName, headerValue)
 
-	m.logger.Info("injected secret",
+	// Log at DEBUG level only - do not expose credential injection in INFO logs
+	m.logger.Debug("injected credential",
 		"host", host,
-		"header", route.HeaderName,
-		"secret_id", route.SecretID)
+		"header", route.HeaderName)
+
+	return nil
+}
+
+// validateCertKeyPair verifies that the certificate and private key form a valid pair.
+// This catches mismatched cert/key pairs early rather than failing at TLS handshake time.
+func validateCertKeyPair(cert *x509.Certificate, key *rsa.PrivateKey) error {
+	// Encode cert to PEM
+	certPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: cert.Raw,
+	})
+
+	// Encode key to PEM
+	keyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+
+	// Use tls.X509KeyPair to validate they match
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return fmt.Errorf("certificate/key mismatch: %w", err)
+	}
 
 	return nil
 }

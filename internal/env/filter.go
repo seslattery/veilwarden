@@ -7,8 +7,9 @@ import "strings"
 func LooksLikeSecret(key string) bool {
 	upper := strings.ToUpper(key)
 
-	// Common secret suffixes/patterns
-	secretPatterns := []string{
+	// Common secret suffixes - use HasSuffix for more precise matching
+	// to avoid false positives like "KEYBOARD_LAYOUT" matching "_KEY"
+	secretSuffixes := []string{
 		"_KEY",
 		"_TOKEN",
 		"_SECRET",
@@ -21,8 +22,8 @@ func LooksLikeSecret(key string) bool {
 		"_PRIVATE",
 	}
 
-	for _, pattern := range secretPatterns {
-		if strings.Contains(upper, pattern) {
+	for _, suffix := range secretSuffixes {
+		if strings.HasSuffix(upper, suffix) {
 			return true
 		}
 	}

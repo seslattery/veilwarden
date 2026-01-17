@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -73,6 +75,12 @@ func (c *Config) Validate() error {
 	if len(c.Command) == 0 {
 		return fmt.Errorf("command is required")
 	}
+
+	// Validate command executable exists and is a file
+	if err := validateCommandPath(c.Command[0]); err != nil {
+		return fmt.Errorf("invalid command: %w", err)
+	}
+
 	if c.ProxyAddr == "" {
 		return fmt.Errorf("proxy address is required for network isolation")
 	}
@@ -121,4 +129,37 @@ func validateProxyAddr(addr string) error {
 
 func containsPathTraversal(path string) bool {
 	return strings.Contains(path, "..")
+}
+
+// validateCommandPath checks that the command exists and is executable.
+// For absolute paths, it validates the file directly.
+// For relative paths, it uses exec.LookPath to find the command in PATH.
+func validateCommandPath(cmdPath string) error {
+	var absPath string
+	var err error
+
+	if filepath.IsAbs(cmdPath) {
+		absPath = cmdPath
+	} else {
+		// Try to find command in PATH
+		absPath, err = exec.LookPath(cmdPath)
+		if err != nil {
+			return fmt.Errorf("command not found: %s", cmdPath)
+		}
+	}
+
+	// Verify the file exists and is not a directory
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("command not found: %s", absPath)
+		}
+		return fmt.Errorf("cannot access command: %w", err)
+	}
+
+	if info.IsDir() {
+		return fmt.Errorf("command is a directory: %s", absPath)
+	}
+
+	return nil
 }

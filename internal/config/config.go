@@ -35,9 +35,18 @@ type RouteEntry struct {
 
 // PolicyEntry configures request authorization.
 type PolicyEntry struct {
-	Engine       string `yaml:"engine"`
-	PolicyPath   string `yaml:"policy_path"`
-	DecisionPath string `yaml:"decision_path"`
+	Engine       string          `yaml:"engine"`                  // "disabled", "opa", "allowlist"
+	PolicyPath   string          `yaml:"policy_path,omitempty"`   // For OPA
+	DecisionPath string          `yaml:"decision_path,omitempty"` // For OPA
+	Allow        []AllowlistRule `yaml:"allow,omitempty"`         // For allowlist engine
+	Preset       string          `yaml:"preset,omitempty"`        // For allowlist: "ai-coding-agent", etc.
+}
+
+// AllowlistRule defines a single domain allowlist rule.
+type AllowlistRule struct {
+	Host    string   `yaml:"host"`              // Required: "api.openai.com" or "*.example.com"
+	Methods []string `yaml:"methods,omitempty"` // Optional: ["GET", "POST"], nil = all
+	Paths   []string `yaml:"paths,omitempty"`   // Optional: ["/v1/*"], nil = all
 }
 
 // DopplerEntry configures Doppler secret store.
@@ -213,6 +222,30 @@ func (c *Config) Validate() error {
 		// Validate backend is known
 		if !warden.ValidBackends[c.Sandbox.Backend] {
 			return fmt.Errorf("unknown sandbox backend: %s", c.Sandbox.Backend)
+		}
+	}
+
+	// Validate Policy configuration
+	if c.Policy != nil {
+		switch c.Policy.Engine {
+		case "", "disabled":
+			// OK - no validation needed
+		case "opa":
+			if c.Policy.PolicyPath == "" {
+				return fmt.Errorf("policy.policy_path is required when engine is 'opa'")
+			}
+		case "allowlist":
+			if c.Policy.Preset == "" && len(c.Policy.Allow) == 0 {
+				return fmt.Errorf("policy.preset or policy.allow is required when engine is 'allowlist'")
+			}
+			// Validate each rule
+			for i, rule := range c.Policy.Allow {
+				if rule.Host == "" {
+					return fmt.Errorf("policy.allow[%d].host is required", i)
+				}
+			}
+		default:
+			return fmt.Errorf("unknown policy.engine: %s (valid: disabled, opa, allowlist)", c.Policy.Engine)
 		}
 	}
 

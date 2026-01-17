@@ -26,7 +26,7 @@ Veilwarden is a sidecar proxy + sandbox that lets you give AI agents real API ac
 │        └── ✗ Can't see DOPPLER_TOKEN or raw credentials        │
 └─────────────────────────────────────────────────────────────────┘
 ````
-> Use Doppler? Veilwarden can treat Doppler as its secret backend so agents only eversee stable IDs, not raw keys. Rotate keys or swap configs in Doppler and agents automatically pick it up. 👉 [Skip to Doppler integration](#option-b-doppler-for-teams)
+> Use Doppler? Veilwarden can treat Doppler as its secret backend so agents never see raw keys. Rotate keys or swap configs in Doppler and agents automatically pick it up. 👉 [Skip to Doppler integration](#option-b-doppler-for-teams)
 
 ---
 

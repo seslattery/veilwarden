@@ -8,27 +8,36 @@ default:
 # Run all tests
 test:
     @echo "Running all tests..."
-    go test -v ./...
+    go test -race -v ./...
 
 # Run unit tests only (fast)
 test-unit:
     @echo "Running unit tests..."
-    go test -v -short ./...
+    go test -race -v -short ./...
 
 # Run veil CLI tests
 test-veil:
     @echo "Running veil CLI tests..."
-    go test -v ./cmd/veil/...
+    go test -race -v ./cmd/veil/...
 
 # Run sandbox e2e tests (requires DOPPLER_TOKEN)
 test-e2e:
     @echo "Running sandbox E2E tests..."
-    go test -v -run TestE2ESandbox ./cmd/veil/...
+    go test -race -v -run TestE2ESandbox ./cmd/veil/...
+
+# Run full Doppler/OPA/sandbox integration test
+test-doppler:
+    @echo "Running full Doppler integration test..."
+    DOPPLER_TOKEN=$(doppler configure get token --plain) ./scripts/test_doppler_opa_sandbox_e2e.sh
+
+# Run all tests including integration tests
+test-all: test test-doppler
+    @echo "✅ All tests passed!"
 
 # Run tests with coverage
 test-coverage:
     @echo "Running tests with coverage..."
-    go test -v -coverprofile=coverage.out ./...
+    go test -race -v -coverprofile=coverage.out ./...
     go tool cover -html=coverage.out -o coverage.html
     @echo "Coverage report generated: coverage.html"
 

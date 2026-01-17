@@ -23,7 +23,7 @@ func NewStore(cfg *config.Config) (proxy.SecretStore, error) {
 	}
 
 	// No Doppler configured - load secrets from environment based on route configurations
-	return newEnvStore(cfg.Routes), nil
+	return newEnvStore(cfg.Routes)
 }
 
 func newDopplerStore(dopplerCfg *config.DopplerEntry, token string) (proxy.SecretStore, error) {
@@ -35,6 +35,12 @@ func newDopplerStore(dopplerCfg *config.DopplerEntry, token string) (proxy.Secre
 		if err != nil {
 			return nil, fmt.Errorf("invalid doppler.cache_ttl: %w", err)
 		}
+	}
+
+	// Enforce minimum cache TTL to prevent API exhaustion
+	const minCacheTTL = 1 * time.Minute
+	if cacheTTL > 0 && cacheTTL < minCacheTTL {
+		return nil, fmt.Errorf("doppler.cache_ttl must be at least %v, got %v", minCacheTTL, cacheTTL)
 	}
 
 	// Get base URL from env or use default
@@ -53,14 +59,23 @@ func newDopplerStore(dopplerCfg *config.DopplerEntry, token string) (proxy.Secre
 	}), nil
 }
 
-func newEnvStore(routes []config.RouteEntry) proxy.SecretStore {
+func newEnvStore(routes []config.RouteEntry) (proxy.SecretStore, error) {
 	secrets := make(map[string]string)
+	var missing []string
+
 	for _, route := range routes {
 		if route.SecretID != "" {
 			if val := os.Getenv(route.SecretID); val != "" {
 				secrets[route.SecretID] = val
+			} else {
+				missing = append(missing, route.SecretID)
 			}
 		}
 	}
-	return proxy.NewMemorySecretStore(secrets)
+
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("missing environment variables for secrets: %v", missing)
+	}
+
+	return proxy.NewMemorySecretStore(secrets), nil
 }

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -22,10 +21,10 @@ type EphemeralCA struct {
 }
 
 // GenerateEphemeralCA creates a new ephemeral CA certificate and key.
-// The certificate is valid for 5 days and is written to a temp file.
+// The certificate is valid for 1 hour and is written to a temp file.
 func GenerateEphemeralCA(sessionID string) (*EphemeralCA, error) {
-	// Generate RSA key for CA
-	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	// Generate RSA key for CA (3072 bits for stronger security)
+	caKey, err := rsa.GenerateKey(rand.Reader, 3072)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate CA key: %w", err)
 	}
@@ -36,14 +35,14 @@ func GenerateEphemeralCA(sessionID string) (*EphemeralCA, error) {
 		return nil, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 
-	// Create self-signed CA certificate
+	// Create self-signed CA certificate with 1 hour validity
 	caCertTemplate := &x509.Certificate{
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			CommonName: fmt.Sprintf("VeilWarden Ephemeral CA %s", sessionID[:8]),
 		},
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(5 * 24 * time.Hour),
+		NotAfter:              time.Now().Add(1 * time.Hour),
 		IsCA:                  true,
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
 		BasicConstraintsValid: true,
@@ -60,18 +59,31 @@ func GenerateEphemeralCA(sessionID string) (*EphemeralCA, error) {
 		return nil, fmt.Errorf("failed to parse CA cert: %w", err)
 	}
 
-	// Write cert to temp file
-	tmpDir := os.TempDir()
-	certPath := filepath.Join(tmpDir, fmt.Sprintf("veil-ca-%s.crt", sessionID))
-
-	certFile, err := os.Create(certPath)
+	// Write cert to temp file using CreateTemp for secure atomic file creation.
+	// This prevents TOCTOU race conditions and symlink attacks by using
+	// unpredictable filenames and secure default permissions (0600).
+	certFile, err := os.CreateTemp("", "veil-ca-*.crt")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create cert file: %w", err)
 	}
-	defer certFile.Close()
+	certPath := certFile.Name()
+
+	// Ensure 0600 permissions (defense-in-depth, CreateTemp already uses this)
+	if err := os.Chmod(certPath, 0600); err != nil {
+		certFile.Close()
+		os.Remove(certPath)
+		return nil, fmt.Errorf("failed to set cert permissions: %w", err)
+	}
 
 	if err := pem.Encode(certFile, &pem.Block{Type: "CERTIFICATE", Bytes: caCertDER}); err != nil {
+		certFile.Close()
+		os.Remove(certPath)
 		return nil, fmt.Errorf("failed to encode cert: %w", err)
+	}
+
+	if err := certFile.Close(); err != nil {
+		os.Remove(certPath)
+		return nil, fmt.Errorf("failed to close cert file: %w", err)
 	}
 
 	return &EphemeralCA{

@@ -1,6 +1,20 @@
 package env
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+// ValidatePassthrough checks that passthrough variables don't include secret-like patterns.
+// This prevents accidental exposure of secrets through the passthrough mechanism.
+func ValidatePassthrough(vars []string) error {
+	for _, v := range vars {
+		if LooksLikeSecret(v) {
+			return fmt.Errorf("env_passthrough contains secret-like variable: %s (use routes to inject secrets securely)", v)
+		}
+	}
+	return nil
+}
 
 // BuildProxyEnv creates an environment for the child process with:
 // - Secret-like variables filtered out (unless in passthrough list)

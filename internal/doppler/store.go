@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 // Options configures the Doppler secret store.
@@ -29,8 +31,9 @@ type Store struct {
 	client *http.Client
 	opts   Options
 
-	mu    sync.Mutex
-	cache map[string]cachedSecret
+	mu      sync.Mutex
+	cache   map[string]cachedSecret
+	sfGroup singleflight.Group // prevents duplicate concurrent fetches
 }
 
 type cachedSecret struct {
@@ -64,21 +67,37 @@ func NewStore(opts *Options) *Store {
 }
 
 // Get retrieves a secret from Doppler by ID, using caching when available.
+// Uses singleflight to ensure only one fetch per secret ID even under concurrent access.
 func (d *Store) Get(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", errors.New("secret id required")
+	}
+	if len(id) > 256 {
+		return "", errors.New("secret id too long (max 256 characters)")
 	}
 
 	if value, ok := d.getCached(id); ok {
 		return value, nil
 	}
 
-	value, err := d.fetchSecret(ctx, id)
+	// Use singleflight to coalesce concurrent requests for the same secret.
+	// This prevents API exhaustion and timing attacks from concurrent fetches.
+	result, err, _ := d.sfGroup.Do(id, func() (interface{}, error) {
+		// Double-check cache after acquiring singleflight lock
+		if value, ok := d.getCached(id); ok {
+			return value, nil
+		}
+		value, err := d.fetchSecret(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		d.storeCache(id, value)
+		return value, nil
+	})
 	if err != nil {
 		return "", err
 	}
-	d.storeCache(id, value)
-	return value, nil
+	return result.(string), nil
 }
 
 func (d *Store) getCached(id string) (string, bool) {
@@ -129,7 +148,8 @@ func (d *Store) fetchSecret(ctx context.Context, id string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("doppler status %d: %s", resp.StatusCode, summarizeBody(body))
+		// Do not include response body in error - it may contain sensitive data
+		return "", fmt.Errorf("doppler returned status %d", resp.StatusCode)
 	}
 
 	var parsed secretResponse
@@ -168,10 +188,3 @@ func (r secretResponse) message() string {
 	return r.Messages[0].Message
 }
 
-func summarizeBody(body []byte) string {
-	const maxLen = 256
-	if len(body) <= maxLen {
-		return string(body)
-	}
-	return string(body[:maxLen]) + "..."
-}

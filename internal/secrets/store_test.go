@@ -212,6 +212,7 @@ func TestNewStore_EmptyRoutesMemoryStore(t *testing.T) {
 
 func TestNewStore_DopplerCacheTTLParsing(t *testing.T) {
 	// Test that various cache TTL formats are parsed correctly
+	// Note: Minimum cache TTL is 1 minute to prevent API exhaustion
 	testCases := []struct {
 		name     string
 		cacheTTL string
@@ -219,7 +220,7 @@ func TestNewStore_DopplerCacheTTLParsing(t *testing.T) {
 	}{
 		{"minutes", "10m", 10 * time.Minute},
 		{"hours", "2h", 2 * time.Hour},
-		{"seconds", "30s", 30 * time.Second},
+		{"one_minute", "1m", 1 * time.Minute}, // minimum allowed
 		{"mixed", "1h30m", 90 * time.Minute},
 	}
 
@@ -251,5 +252,51 @@ func TestNewStore_DopplerCacheTTLParsing(t *testing.T) {
 			// but we verified the parsing doesn't error
 			_ = dopplerStore
 		})
+	}
+}
+
+func TestNewStore_DopplerCacheTTLMinimum(t *testing.T) {
+	// Test that cache TTL below minimum (1 minute) is rejected
+	os.Setenv("DOPPLER_TOKEN", "test-token")
+	defer os.Unsetenv("DOPPLER_TOKEN")
+
+	cfg := &config.Config{
+		Doppler: &config.DopplerEntry{
+			Project:  "test-project",
+			Config:   "test-config",
+			CacheTTL: "30s", // Below minimum of 1 minute
+		},
+	}
+
+	_, err := NewStore(cfg)
+	if err == nil {
+		t.Fatal("Expected error for cache TTL below minimum, got nil")
+	}
+
+	expectedMsg := "must be at least"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain %q, got: %v", expectedMsg, err)
+	}
+}
+
+func TestNewStore_MissingEnvSecrets(t *testing.T) {
+	// Test that missing environment variables for secrets cause startup error
+	os.Unsetenv("DOPPLER_TOKEN")
+	os.Unsetenv("MISSING_SECRET")
+
+	cfg := &config.Config{
+		Routes: []config.RouteEntry{
+			{Host: "api.example.com", SecretID: "MISSING_SECRET"},
+		},
+	}
+
+	_, err := NewStore(cfg)
+	if err == nil {
+		t.Fatal("Expected error for missing secret environment variable, got nil")
+	}
+
+	expectedMsg := "MISSING_SECRET"
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error to contain %q, got: %v", expectedMsg, err)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/seslattery/veilwarden/internal/cert"
 	"github.com/seslattery/veilwarden/internal/config"
 	"github.com/seslattery/veilwarden/internal/env"
+	"github.com/seslattery/veilwarden/internal/policy/allowlist"
 	"github.com/seslattery/veilwarden/internal/policy/opa"
 	"github.com/seslattery/veilwarden/internal/proxy"
 	"github.com/seslattery/veilwarden/internal/secrets"
@@ -162,6 +163,12 @@ func Run(ctx context.Context, cfg *config.Config, args []string, sandboxBackend 
 	if cfg.Sandbox != nil {
 		envPassthrough = cfg.Sandbox.EnvPassthrough
 	}
+
+	// Validate passthrough doesn't include secret-like variables
+	if err := env.ValidatePassthrough(envPassthrough); err != nil {
+		return fmt.Errorf("invalid env_passthrough config: %w", err)
+	}
+
 	childEnv := env.BuildProxyEnv(os.Environ(), proxyURL, ca.CertPath, envPassthrough)
 
 	// Execute command (sandboxed or direct)
@@ -355,21 +362,51 @@ func buildPolicyEngine(cfg *config.Config) (proxy.PolicyEngine, error) {
 		return proxy.NewAllowAllPolicyEngine(), nil
 	}
 
-	// If OPA policy
-	if cfg.Policy.Engine == "opa" {
+	switch cfg.Policy.Engine {
+	case "opa":
 		if cfg.Policy.PolicyPath == "" {
 			return nil, fmt.Errorf("policy.policy_path required when policy.engine is 'opa'")
 		}
-
 		decisionPath := cfg.Policy.DecisionPath
 		if decisionPath == "" {
 			decisionPath = "github.com/seslattery/veilwarden/authz/allow"
 		}
-
 		return opa.New(context.Background(), cfg.Policy.PolicyPath, decisionPath)
+
+	case "allowlist":
+		return buildAllowlistEngine(cfg.Policy)
+
+	default:
+		return nil, fmt.Errorf("unknown policy engine: %s (valid: disabled, opa, allowlist)", cfg.Policy.Engine)
+	}
+}
+
+func buildAllowlistEngine(policy *config.PolicyEntry) (proxy.PolicyEngine, error) {
+	var rules []allowlist.Rule
+
+	// Load preset if specified
+	if policy.Preset != "" {
+		presetRules, err := allowlist.GetPreset(policy.Preset)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, presetRules...)
 	}
 
-	return nil, fmt.Errorf("unknown policy engine type: %s (valid options: disabled, opa)", cfg.Policy.Engine)
+	// Add inline rules
+	for _, r := range policy.Allow {
+		rules = append(rules, allowlist.Rule{
+			Host:    r.Host,
+			Methods: r.Methods,
+			Paths:   r.Paths,
+		})
+	}
+
+	if len(rules) == 0 {
+		return nil, fmt.Errorf("allowlist policy requires either 'preset' or 'allow' rules")
+	}
+
+	return allowlist.New(rules), nil
 }
 
 func generateSessionID() (string, error) {

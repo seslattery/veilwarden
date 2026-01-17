@@ -49,7 +49,8 @@ type PolicyInput struct {
 	SecretID string // which secret would be used (empty if route not resolved yet)
 
 	// Request body for policy inspection
-	Body string
+	Body          string
+	BodyTruncated bool `json:"body_truncated,omitempty"` // true if body was truncated due to size limit
 
 	// Metadata
 	RequestID string

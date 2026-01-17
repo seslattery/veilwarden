@@ -33,6 +33,7 @@ cleanup() {
     echo "Artifacts: ${TEST_DIR}"
     echo -e "Total: ${TEST_COUNT}  ${GREEN}Passed: ${PASS_COUNT}${NC}  ${RED}Failed: ${FAIL_COUNT}${NC}\n"
     [[ ${FAIL_COUNT} -gt 0 ]] && exit 1
+    exit 0
 }
 trap cleanup EXIT
 
@@ -137,6 +138,119 @@ sandbox:
   allowed_write_paths: ["${SANDBOX_PROJECT}", "${SANDBOX_DATA}"]
   denied_read_paths: ["~/.ssh", "~/.aws", "~/.doppler", "~/.gnupg"]
 EOF
+
+    echo "${config_file}"
+}
+
+# ==============================================================================
+# Create allowlist policy config (no sandbox for policy-only testing)
+# ==============================================================================
+
+create_allowlist_config() {
+    local config_name=$1
+    local config_file="${TEST_DIR}/config-allowlist-${config_name}.yaml"
+
+    case "${config_name}" in
+        "basic")
+            cat > "${config_file}" << EOF
+routes:
+  - host: "postman-echo.com"
+    secret_id: VEIL_E2E_HTTPBIN_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+  - host: "127.0.0.1"
+    secret_id: VEIL_E2E_ECHO_KEY
+    header_name: X-API-Key
+    header_value_template: "{{secret}}"
+doppler:
+  project: ${DOPPLER_PROJECT}
+  config: ${DOPPLER_CONFIG}
+policy:
+  engine: allowlist
+  allow:
+    - host: postman-echo.com
+    - host: "127.0.0.1"
+sandbox:
+  enabled: false
+EOF
+            ;;
+        "method-restricted")
+            cat > "${config_file}" << EOF
+routes:
+  - host: "postman-echo.com"
+    secret_id: VEIL_E2E_HTTPBIN_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+doppler:
+  project: ${DOPPLER_PROJECT}
+  config: ${DOPPLER_CONFIG}
+policy:
+  engine: allowlist
+  allow:
+    - host: postman-echo.com
+      methods: [GET]
+sandbox:
+  enabled: false
+EOF
+            ;;
+        "path-restricted")
+            cat > "${config_file}" << EOF
+routes:
+  - host: "postman-echo.com"
+    secret_id: VEIL_E2E_HTTPBIN_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+doppler:
+  project: ${DOPPLER_PROJECT}
+  config: ${DOPPLER_CONFIG}
+policy:
+  engine: allowlist
+  allow:
+    - host: postman-echo.com
+      paths: ["/get", "/post"]
+sandbox:
+  enabled: false
+EOF
+            ;;
+        "wildcard")
+            cat > "${config_file}" << EOF
+routes:
+  - host: "postman-echo.com"
+    secret_id: VEIL_E2E_HTTPBIN_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+doppler:
+  project: ${DOPPLER_PROJECT}
+  config: ${DOPPLER_CONFIG}
+policy:
+  engine: allowlist
+  allow:
+    - host: "*.postman-echo.com"
+    - host: postman-echo.com
+sandbox:
+  enabled: false
+EOF
+            ;;
+        "preset")
+            cat > "${config_file}" << EOF
+routes:
+  - host: "postman-echo.com"
+    secret_id: VEIL_E2E_HTTPBIN_KEY
+    header_name: Authorization
+    header_value_template: "Bearer {{secret}}"
+doppler:
+  project: ${DOPPLER_PROJECT}
+  config: ${DOPPLER_CONFIG}
+policy:
+  engine: allowlist
+  preset: strict-openai-only
+  allow:
+    - host: postman-echo.com
+sandbox:
+  enabled: false
+EOF
+            ;;
+    esac
 
     echo "${config_file}"
 }
@@ -638,6 +752,157 @@ fi
 for backend in ${BACKENDS_TO_TEST}; do
     run_backend_tests "${backend}"
 done
+
+# ==============================================================================
+# Allowlist Policy Engine Tests
+# ==============================================================================
+
+header "Testing Allowlist Policy Engine"
+
+# Create test scripts directory for allowlist tests
+ALLOWLIST_SCRIPTS="${TEST_DIR}/allowlist-scripts"
+mkdir -p "${ALLOWLIST_SCRIPTS}"
+
+# Create simple HTTP test script for allowlist tests
+cat > "${ALLOWLIST_SCRIPTS}/http_test.py" << 'PYTHON'
+#!/usr/bin/env python3
+import os, sys, json, urllib.request, ssl
+
+url = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:9999/health"
+method = sys.argv[2] if len(sys.argv) > 2 else "GET"
+
+try:
+    ctx = ssl.create_default_context()
+    ca = os.environ.get('SSL_CERT_FILE')
+    if ca: ctx.load_verify_locations(ca)
+
+    data = b'{}' if method == "POST" else None
+    req = urllib.request.Request(url, method=method, data=data)
+    req.add_header('User-Agent', 'curl/8.0')
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+        print(resp.read().decode('utf-8'))
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr)
+    sys.exit(1)
+PYTHON
+chmod +x "${ALLOWLIST_SCRIPTS}/http_test.py"
+
+# --- Test 1: Basic Allowlist - Host Matching ---
+subheader "Test 1: Basic Allowlist - Host Matching"
+
+ALLOWLIST_CFG=$(create_allowlist_config "basic")
+info "Config: ${ALLOWLIST_CFG}"
+
+# Allowed host
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://postman-echo.com/get" GET)
+JSON=$(echo "${OUTPUT}" | extract_json)
+AUTH=$(echo "${JSON}" | jq -r '.headers.authorization // empty')
+EXPECTED="Bearer ${SECRET_HTTPBIN}"
+
+if [[ "${AUTH}" == "${EXPECTED}" ]]; then
+    pass "[allowlist] Allowed host postman-echo.com works with secret"
+else
+    fail "[allowlist] Host should be allowed: ${AUTH}"
+fi
+
+# Blocked host (not in allowlist)
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://httpbin.org/get" GET 2>&1)
+if echo "${OUTPUT}" | grep -qiE "(403|forbidden|not in allowlist|blocked)"; then
+    pass "[allowlist] Blocked host httpbin.org rejected"
+else
+    fail "[allowlist] Host httpbin.org should be blocked"
+fi
+
+# --- Test 2: Method Restrictions ---
+subheader "Test 2: Allowlist - Method Restrictions"
+
+ALLOWLIST_CFG=$(create_allowlist_config "method-restricted")
+info "Config: ${ALLOWLIST_CFG}"
+
+# GET should be allowed
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://postman-echo.com/get" GET)
+JSON=$(echo "${OUTPUT}" | extract_json)
+AUTH=$(echo "${JSON}" | jq -r '.headers.authorization // empty')
+
+if [[ "${AUTH}" == "Bearer ${SECRET_HTTPBIN}" ]]; then
+    pass "[allowlist] GET method allowed"
+else
+    fail "[allowlist] GET should be allowed"
+fi
+
+# POST should be blocked (only GET allowed)
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://postman-echo.com/post" POST 2>&1)
+if echo "${OUTPUT}" | grep -qiE "(403|forbidden|not in allowlist|blocked)"; then
+    pass "[allowlist] POST method blocked (only GET allowed)"
+else
+    fail "[allowlist] POST should be blocked when only GET is allowed"
+fi
+
+# --- Test 3: Path Restrictions ---
+subheader "Test 3: Allowlist - Path Restrictions"
+
+ALLOWLIST_CFG=$(create_allowlist_config "path-restricted")
+info "Config: ${ALLOWLIST_CFG}"
+
+# /get should be allowed
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://postman-echo.com/get" GET)
+JSON=$(echo "${OUTPUT}" | extract_json)
+AUTH=$(echo "${JSON}" | jq -r '.headers.authorization // empty')
+
+if [[ "${AUTH}" == "Bearer ${SECRET_HTTPBIN}" ]]; then
+    pass "[allowlist] Path /get allowed"
+else
+    fail "[allowlist] Path /get should be allowed"
+fi
+
+# /headers should be blocked (not in allowed paths)
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://postman-echo.com/headers" GET 2>&1)
+if echo "${OUTPUT}" | grep -qiE "(403|forbidden|not in allowlist|blocked)"; then
+    pass "[allowlist] Path /headers blocked (not in allowed paths)"
+else
+    fail "[allowlist] Path /headers should be blocked"
+fi
+
+# --- Test 4: Preset + Inline Rules ---
+subheader "Test 4: Allowlist - Preset with Additional Rules"
+
+ALLOWLIST_CFG=$(create_allowlist_config "preset")
+info "Config: ${ALLOWLIST_CFG}"
+
+# postman-echo.com should work (from inline rule added to preset)
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://postman-echo.com/get" GET)
+JSON=$(echo "${OUTPUT}" | extract_json)
+AUTH=$(echo "${JSON}" | jq -r '.headers.authorization // empty')
+
+if [[ "${AUTH}" == "Bearer ${SECRET_HTTPBIN}" ]]; then
+    pass "[allowlist] Preset + inline rule works"
+else
+    fail "[allowlist] Preset + inline rule should work"
+fi
+
+# Random host should be blocked (not in preset or inline rules)
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "https://httpbin.org/get" GET 2>&1)
+if echo "${OUTPUT}" | grep -qiE "(403|forbidden|not in allowlist|blocked)"; then
+    pass "[allowlist] Host not in preset blocked"
+else
+    fail "[allowlist] Host not in preset should be blocked"
+fi
+
+# --- Test 5: Local Echo Server with Allowlist ---
+subheader "Test 5: Allowlist - Local Echo Server"
+
+ALLOWLIST_CFG=$(create_allowlist_config "basic")
+
+# 127.0.0.1 route should work
+OUTPUT=$(run_veil "${ALLOWLIST_CFG}" python3 "${ALLOWLIST_SCRIPTS}/http_test.py" "http://127.0.0.1:${ECHO_PORT}/api/test" GET)
+JSON=$(echo "${OUTPUT}" | extract_json)
+KEY=$(echo "${JSON}" | jq -r '.headers["X-Api-Key"][0] // empty')
+
+if [[ "${KEY}" == "${SECRET_ECHO}" ]]; then
+    pass "[allowlist] Local echo server works with allowlist"
+else
+    fail "[allowlist] Local echo server should work (key: ${KEY})"
+fi
 
 # ==============================================================================
 # Summary
