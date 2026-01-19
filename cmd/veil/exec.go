@@ -41,6 +41,8 @@ var (
 	execVerbose    bool
 	execPort       int
 	execLogFile    string
+	execTier       string
+	execPermissive bool
 )
 
 func init() {
@@ -52,6 +54,8 @@ func init() {
 	execCmd.Flags().BoolVar(&execVerbose, "verbose", false, "Show proxy logs for debugging")
 	execCmd.Flags().IntVar(&execPort, "port", 0, "Proxy listen port (0 = random)")
 	execCmd.Flags().StringVar(&execLogFile, "log-file", "", "Write proxy logs to file (default: .veilwarden/proxy.log when verbose)")
+	execCmd.Flags().StringVar(&execTier, "tier", "", "Sandbox security tier: standard (default), permissive")
+	execCmd.Flags().BoolVar(&execPermissive, "permissive", false, "Shorthand for --tier=permissive")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
@@ -90,6 +94,11 @@ func runExec(cmd *cobra.Command, args []string) error {
 
 	// Apply defaults for any unset values
 	cfg.ApplyDefaults()
+
+	// Apply tier override from CLI flags
+	if err := applyTierOverride(cfg, cmd); err != nil {
+		return err
+	}
 
 	if execVerbose {
 		fmt.Fprintf(os.Stderr, "Config loaded: %d routes\n", len(cfg.Routes))
@@ -148,4 +157,50 @@ func shouldUseSandbox(cfg *config.Config, cmd *cobra.Command) bool {
 
 	// Default to config
 	return cfg.Sandbox != nil && cfg.Sandbox.Enabled
+}
+
+// applyTierOverride applies tier from CLI flags to config
+func applyTierOverride(cfg *config.Config, cmd *cobra.Command) error {
+	// --permissive is shorthand for --tier=permissive
+	tierStr := execTier
+	if execPermissive {
+		tierStr = "permissive"
+	}
+
+	// Only apply if a tier was specified
+	if tierStr == "" {
+		return nil
+	}
+
+	// Validate the tier
+	tier, err := warden.ParseTier(tierStr)
+	if err != nil {
+		return fmt.Errorf("invalid --tier value: %w", err)
+	}
+
+	// Ensure sandbox config exists
+	if cfg.Sandbox == nil {
+		cfg.Sandbox = &config.SandboxEntry{
+			Enabled: true,
+			Backend: "auto",
+		}
+	}
+
+	// Apply the tier
+	cfg.Sandbox.Tier = tier.String()
+
+	// When downgrading to standard tier, clear permissive-only settings
+	// that would otherwise pass through without validation
+	if !tier.IsPermissive() {
+		if len(cfg.Sandbox.AllowedUnixSockets) > 0 {
+			fmt.Fprintf(os.Stderr, "Warning: clearing allowed_unix_sockets (requires permissive tier)\n")
+			cfg.Sandbox.AllowedUnixSockets = nil
+		}
+		if cfg.Sandbox.AllowDangerousFiles {
+			fmt.Fprintf(os.Stderr, "Warning: clearing allow_dangerous_files (requires permissive tier)\n")
+			cfg.Sandbox.AllowDangerousFiles = false
+		}
+	}
+
+	return nil
 }

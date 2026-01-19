@@ -477,3 +477,96 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+func TestValidate_SandboxTier(t *testing.T) {
+	tests := []struct {
+		name    string
+		tier    string
+		wantErr bool
+	}{
+		{"empty defaults to standard", "", false},
+		{"standard is valid", "standard", false},
+		{"permissive is valid", "permissive", false},
+		{"invalid tier", "paranoid", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{
+				Sandbox: &SandboxEntry{
+					Enabled: true,
+					Backend: "seatbelt",
+					Tier:    tt.tier,
+				},
+			}
+
+			err := cfg.Validate()
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), "tier")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidate_UnixSocketsRequirePermissive(t *testing.T) {
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:            true,
+			Backend:            "seatbelt",
+			Tier:               "standard",
+			AllowedUnixSockets: []string{"/var/run/docker.sock"},
+		},
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unix sockets")
+	assert.Contains(t, err.Error(), "permissive")
+}
+
+func TestValidate_DangerousFilesRequirePermissive(t *testing.T) {
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:             true,
+			Backend:             "seatbelt",
+			Tier:                "standard",
+			AllowDangerousFiles: true,
+		},
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "dangerous files")
+	assert.Contains(t, err.Error(), "permissive")
+}
+
+func TestValidate_PermissiveTierAllowsUnixSockets(t *testing.T) {
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:            true,
+			Backend:            "seatbelt",
+			Tier:               "permissive",
+			AllowedUnixSockets: []string{"/var/run/docker.sock"},
+		},
+	}
+
+	err := cfg.Validate()
+	assert.NoError(t, err)
+}
+
+func TestValidate_PermissiveTierAllowsDangerousFiles(t *testing.T) {
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:             true,
+			Backend:             "seatbelt",
+			Tier:                "permissive",
+			AllowDangerousFiles: true,
+		},
+	}
+
+	err := cfg.Validate()
+	assert.NoError(t, err)
+}

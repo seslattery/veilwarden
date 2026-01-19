@@ -58,11 +58,14 @@ type DopplerEntry struct {
 
 // SandboxEntry configures sandbox isolation.
 type SandboxEntry struct {
-	Enabled           bool     `yaml:"enabled"`
-	Backend           string   `yaml:"backend"`
-	WorkingDir        string   `yaml:"working_dir,omitempty"`
-	AllowedWritePaths []string `yaml:"allowed_write_paths,omitempty"`
-	DeniedReadPaths   []string `yaml:"denied_read_paths,omitempty"`
+	Enabled             bool     `yaml:"enabled"`
+	Backend             string   `yaml:"backend"`
+	Tier                string   `yaml:"tier,omitempty"` // "standard" or "permissive"
+	WorkingDir          string   `yaml:"working_dir,omitempty"`
+	AllowedWritePaths   []string `yaml:"allowed_write_paths,omitempty"`
+	DeniedReadPaths     []string `yaml:"denied_read_paths,omitempty"`
+	AllowedUnixSockets  []string `yaml:"allowed_unix_sockets,omitempty"`
+	AllowDangerousFiles bool     `yaml:"allow_dangerous_files,omitempty"`
 	// AllowedReadPaths: TODO not yet implemented in seatbelt. Workaround: use
 	// AllowedWritePaths instead (write paths get read access for dotfiles).
 	AllowedReadPaths []string `yaml:"allowed_read_paths,omitempty"`
@@ -222,6 +225,24 @@ func (c *Config) Validate() error {
 		// Validate backend is known
 		if !warden.ValidBackends[c.Sandbox.Backend] {
 			return fmt.Errorf("unknown sandbox backend: %s", c.Sandbox.Backend)
+		}
+
+		// Validate tier
+		if !warden.ValidTiers[c.Sandbox.Tier] {
+			return fmt.Errorf("unknown sandbox.tier: %q (valid: standard, permissive)", c.Sandbox.Tier)
+		}
+
+		// Parse tier for further validation
+		tier, _ := warden.ParseTier(c.Sandbox.Tier)
+
+		// Unix sockets require permissive tier
+		if len(c.Sandbox.AllowedUnixSockets) > 0 && !tier.IsPermissive() {
+			return fmt.Errorf("sandbox.allowed_unix_sockets requires tier: permissive (unix sockets grant significant host access)")
+		}
+
+		// AllowDangerousFiles requires permissive tier
+		if c.Sandbox.AllowDangerousFiles && !tier.IsPermissive() {
+			return fmt.Errorf("sandbox.allow_dangerous_files requires tier: permissive (dangerous files like .env are always blocked in standard tier)")
 		}
 	}
 

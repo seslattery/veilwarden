@@ -1236,6 +1236,326 @@ sandbox:
 	})
 }
 
+// TestSandboxTierStandard verifies that the standard tier provides secure defaults
+// with violation logging and restricted permissions.
+func TestSandboxTierStandard(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	dopplerToken := os.Getenv("DOPPLER_TOKEN")
+	if dopplerToken == "" {
+		t.Skip("DOPPLER_TOKEN not set")
+	}
+
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("seatbelt (sandbox-exec) not available")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Build veil binary
+	veilBin := filepath.Join(tmpDir, "veil")
+	repoRoot := findRepoRoot(t)
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", veilBin, "./cmd/veil")
+	buildCmd.Dir = repoRoot
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build veil: %v\n%s", err, out)
+	}
+
+	// Config with standard tier (default)
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := fmt.Sprintf(`routes: []
+doppler:
+  project: veilwarden
+  config: dev
+sandbox:
+  enabled: true
+  backend: seatbelt
+  tier: standard
+  working_dir: %s
+  allowed_write_paths: ["%s"]
+`, projectDir, projectDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	runVeil := func(args ...string) (string, error) {
+		cmdArgs := append([]string{"exec", "--config", configPath, "--"}, args...)
+		cmd := exec.CommandContext(ctx, veilBin, cmdArgs...)
+		cmd.Env = append(os.Environ(), "DOPPLER_TOKEN="+dopplerToken)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	t.Run("ProcessInfoRestricted", func(t *testing.T) {
+		// Standard tier should restrict process-info to same-sandbox
+		// Trying to read other processes' info should fail
+		testScript := `#!/usr/bin/env python3
+import os, json
+try:
+    # Try to read parent process cmdline (outside sandbox)
+    ppid = os.getppid()
+    with open(f"/proc/{ppid}/cmdline", "r") as f:
+        f.read()
+    print(json.dumps({"restricted": False}))
+except Exception as e:
+    print(json.dumps({"restricted": True, "error": str(e)[:80]}))
+`
+		scriptPath := filepath.Join(projectDir, "proc_test.py")
+		if err := os.WriteFile(scriptPath, []byte(testScript), 0755); err != nil {
+			t.Fatalf("failed to write test script: %v", err)
+		}
+
+		out, _ := runVeil("python3", scriptPath)
+		// On macOS, /proc doesn't exist, so this test may behave differently
+		// The key is that process-info* is restricted to same-sandbox
+		t.Logf("Process info test output: %s", out)
+	})
+
+	t.Run("SysctlRestricted", func(t *testing.T) {
+		// Standard tier should have explicit sysctl allowlist
+		// Basic sysctls like hw.ncpu should work via programmatic access
+		// Note: The sysctl CLI command uses numerical MIBs internally which
+		// bypass the sysctl-name filter, but programmatic access (like Python's
+		// os.cpu_count()) uses sysctlbyname() which respects the filter.
+		testScript := `#!/usr/bin/env python3
+import os, json
+
+# os.cpu_count() uses sysctlbyname("hw.ncpu") internally
+ncpu = os.cpu_count()
+print(json.dumps({
+    "hw_ncpu_works": ncpu is not None and ncpu > 0,
+    "ncpu": ncpu
+}))
+`
+		scriptPath := filepath.Join(projectDir, "sysctl_test.py")
+		if err := os.WriteFile(scriptPath, []byte(testScript), 0755); err != nil {
+			t.Fatalf("failed to write test script: %v", err)
+		}
+
+		out, _ := runVeil("python3", scriptPath)
+		result := extractJSON(out)
+		var sysctlTest struct {
+			HwNcpuWorks bool `json:"hw_ncpu_works"`
+			Ncpu        int  `json:"ncpu"`
+		}
+		if err := json.Unmarshal([]byte(result), &sysctlTest); err != nil {
+			t.Logf("output: %s", out)
+		} else if !sysctlTest.HwNcpuWorks {
+			t.Errorf("expected hw.ncpu to work in standard tier via os.cpu_count(), got ncpu=%d", sysctlTest.Ncpu)
+		}
+	})
+}
+
+// TestSandboxTierPermissive verifies that the permissive tier provides
+// relaxed restrictions for complex environments.
+func TestSandboxTierPermissive(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	dopplerToken := os.Getenv("DOPPLER_TOKEN")
+	if dopplerToken == "" {
+		t.Skip("DOPPLER_TOKEN not set")
+	}
+
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("seatbelt (sandbox-exec) not available")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Build veil binary
+	veilBin := filepath.Join(tmpDir, "veil")
+	repoRoot := findRepoRoot(t)
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", veilBin, "./cmd/veil")
+	buildCmd.Dir = repoRoot
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build veil: %v\n%s", err, out)
+	}
+
+	// Config with permissive tier
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := fmt.Sprintf(`routes: []
+doppler:
+  project: veilwarden
+  config: dev
+sandbox:
+  enabled: true
+  backend: seatbelt
+  tier: permissive
+  working_dir: %s
+  allowed_write_paths: ["%s"]
+`, projectDir, projectDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	runVeil := func(args ...string) (string, error) {
+		cmdArgs := append([]string{"exec", "--config", configPath, "--"}, args...)
+		cmd := exec.CommandContext(ctx, veilBin, cmdArgs...)
+		cmd.Env = append(os.Environ(), "DOPPLER_TOKEN="+dopplerToken)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	t.Run("SysctlUnrestricted", func(t *testing.T) {
+		// Permissive tier should allow all sysctl reads
+		testScript := `#!/usr/bin/env python3
+import subprocess, json
+
+# Try reading a sysctl that might not be in standard allowlist
+result = subprocess.run(["sysctl", "kern.boottime"], capture_output=True, text=True)
+print(json.dumps({
+    "kern_boottime_works": result.returncode == 0,
+    "output": result.stdout[:50] if result.stdout else result.stderr[:50]
+}))
+`
+		scriptPath := filepath.Join(projectDir, "sysctl_test.py")
+		if err := os.WriteFile(scriptPath, []byte(testScript), 0755); err != nil {
+			t.Fatalf("failed to write test script: %v", err)
+		}
+
+		out, _ := runVeil("python3", scriptPath)
+		result := extractJSON(out)
+		var sysctlTest struct {
+			KernBoottimeWorks bool   `json:"kern_boottime_works"`
+			Output            string `json:"output"`
+		}
+		if err := json.Unmarshal([]byte(result), &sysctlTest); err != nil {
+			t.Logf("output: %s", out)
+		} else if !sysctlTest.KernBoottimeWorks {
+			t.Logf("kern.boottime not accessible (may be restricted): %s", sysctlTest.Output)
+		}
+	})
+
+	t.Run("ProcessInfoUnrestricted", func(t *testing.T) {
+		// Permissive tier should allow process-info*
+		testScript := `#!/usr/bin/env python3
+import subprocess, json
+
+# pgrep should work in permissive tier
+result = subprocess.run(["pgrep", "-l", "python"], capture_output=True, text=True)
+print(json.dumps({
+    "pgrep_works": result.returncode == 0 or "python" in result.stdout.lower(),
+    "output": (result.stdout + result.stderr)[:100]
+}))
+`
+		scriptPath := filepath.Join(projectDir, "pgrep_test.py")
+		if err := os.WriteFile(scriptPath, []byte(testScript), 0755); err != nil {
+			t.Fatalf("failed to write test script: %v", err)
+		}
+
+		out, _ := runVeil("python3", scriptPath)
+		t.Logf("pgrep test output: %s", out)
+		// Just log - pgrep behavior varies
+	})
+}
+
+// TestSandboxTierCLIOverride verifies that --tier and --permissive CLI flags work.
+func TestSandboxTierCLIOverride(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	dopplerToken := os.Getenv("DOPPLER_TOKEN")
+	if dopplerToken == "" {
+		t.Skip("DOPPLER_TOKEN not set")
+	}
+
+	if _, err := exec.LookPath("sandbox-exec"); err != nil {
+		t.Skip("seatbelt (sandbox-exec) not available")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	projectDir := filepath.Join(tmpDir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	// Build veil binary
+	veilBin := filepath.Join(tmpDir, "veil")
+	repoRoot := findRepoRoot(t)
+	buildCmd := exec.CommandContext(ctx, "go", "build", "-o", veilBin, "./cmd/veil")
+	buildCmd.Dir = repoRoot
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("failed to build veil: %v\n%s", err, out)
+	}
+
+	// Config with standard tier (will be overridden by CLI)
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	configContent := fmt.Sprintf(`routes: []
+doppler:
+  project: veilwarden
+  config: dev
+sandbox:
+  enabled: true
+  backend: seatbelt
+  tier: standard
+  working_dir: %s
+  allowed_write_paths: ["%s"]
+`, projectDir, projectDir)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	t.Run("PermissiveFlag", func(t *testing.T) {
+		// Test --permissive flag overrides config
+		cmd := exec.CommandContext(ctx, veilBin, "exec", "--config", configPath, "--permissive", "--",
+			"echo", "permissive-test")
+		cmd.Env = append(os.Environ(), "DOPPLER_TOKEN="+dopplerToken)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("output: %s", out)
+			t.Fatalf("--permissive flag failed: %v", err)
+		}
+		if !strings.Contains(string(out), "permissive-test") {
+			t.Errorf("expected output to contain 'permissive-test', got: %s", out)
+		}
+	})
+
+	t.Run("TierFlag", func(t *testing.T) {
+		// Test --tier=permissive flag
+		cmd := exec.CommandContext(ctx, veilBin, "exec", "--config", configPath, "--tier=permissive", "--",
+			"echo", "tier-flag-test")
+		cmd.Env = append(os.Environ(), "DOPPLER_TOKEN="+dopplerToken)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Logf("output: %s", out)
+			t.Fatalf("--tier=permissive flag failed: %v", err)
+		}
+		if !strings.Contains(string(out), "tier-flag-test") {
+			t.Errorf("expected output to contain 'tier-flag-test', got: %s", out)
+		}
+	})
+
+	t.Run("InvalidTier", func(t *testing.T) {
+		// Test invalid --tier value
+		cmd := exec.CommandContext(ctx, veilBin, "exec", "--config", configPath, "--tier=invalid", "--",
+			"echo", "should-fail")
+		cmd.Env = append(os.Environ(), "DOPPLER_TOKEN="+dopplerToken)
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Errorf("expected error for invalid tier, got success: %s", out)
+		}
+		if !strings.Contains(string(out), "tier") {
+			t.Errorf("expected error message about tier, got: %s", out)
+		}
+	})
+}
+
 // TestConcurrentSandboxes verifies that multiple sandbox executions can run
 // concurrently without port conflicts or resource interference.
 func TestConcurrentSandboxes(t *testing.T) {

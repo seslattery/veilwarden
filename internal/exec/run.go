@@ -257,6 +257,9 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		allowedWritePaths = []string{workingDir}
 	}
 
+	// Parse tier from config
+	tier, _ := warden.ParseTier(cfg.Sandbox.Tier)
+
 	// Build sandbox config
 	sandboxCfg := &warden.Config{
 		Command:    args,
@@ -264,10 +267,15 @@ func runSandboxed(ctx context.Context, backend warden.Backend, cfg *config.Confi
 		WorkingDir: workingDir,
 		ProxyAddr:  proxyAddr, // Critical: sandbox will ONLY allow connections to proxy
 
+		// Security tier
+		Tier: tier,
+
 		// Filesystem access control
-		AllowedWritePaths: allowedWritePaths,
-		DeniedReadPaths:   cfg.Sandbox.DeniedReadPaths,
-		AllowedReadPaths:  allowedReadPaths,
+		AllowedWritePaths:   allowedWritePaths,
+		DeniedReadPaths:     cfg.Sandbox.DeniedReadPaths,
+		AllowedReadPaths:    allowedReadPaths,
+		AllowedUnixSockets:  cfg.Sandbox.AllowedUnixSockets,
+		AllowDangerousFiles: cfg.Sandbox.AllowDangerousFiles,
 
 		// Network: hosts that can be accessed via proxy
 		AllowedHosts: allowedHosts,
@@ -406,7 +414,11 @@ func buildAllowlistEngine(policy *config.PolicyEntry) (proxy.PolicyEngine, error
 		return nil, fmt.Errorf("allowlist policy requires either 'preset' or 'allow' rules")
 	}
 
-	return allowlist.New(rules), nil
+	engine, err := allowlist.New(rules)
+	if err != nil {
+		return nil, fmt.Errorf("invalid allowlist rule: %w", err)
+	}
+	return engine, nil
 }
 
 func generateSessionID() (string, error) {

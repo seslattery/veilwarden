@@ -25,6 +25,10 @@ type Config struct {
 	// The sandbox ONLY allows network access to this address.
 	ProxyAddr string
 
+	// Tier is the sandbox security tier (standard or permissive).
+	// Default is TierStandard (zero value).
+	Tier Tier
+
 	// AllowedWritePaths are paths the sandboxed process can write to.
 	// Supports globs on macOS only (e.g., "/tmp/agent-*").
 	AllowedWritePaths []string
@@ -44,8 +48,12 @@ type Config struct {
 	AllowedHosts []string
 
 	// AllowedUnixSockets are Unix socket paths the sandbox can access.
-	// DANGEROUS: Only use if you understand the implications.
+	// Only used in permissive tier.
 	AllowedUnixSockets []string
+
+	// AllowDangerousFiles allows writes to .env, .git/hooks, etc.
+	// Only configurable in permissive tier; always denied in standard.
+	AllowDangerousFiles bool
 
 	// EnablePTY enables PTY allocation for interactive shells.
 	EnablePTY bool

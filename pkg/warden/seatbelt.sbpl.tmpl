@@ -1,12 +1,21 @@
 (version 1)
+{{if .EnableViolationLogging}}
+(deny default (with message "VEILWARDEN_SANDBOX_VIOLATION"))
+{{else}}
 (deny default)
+{{end}}
 
 ;; === Process ===
 (allow process-exec*)
 (allow process-fork)
 (allow signal (target same-sandbox))
-(allow process-info*)  ;; Allow reading process info (pgrep, etc.)
-(allow mach-priv-task-port)  ;; Needed for process inspection
+{{if .AllowAllProcessInfo}}
+(allow process-info*)
+(allow mach-priv-task-port)
+{{else}}
+(allow process-info* (target same-sandbox))
+(allow mach-priv-task-port (target same-sandbox))
+{{end}}
 
 ;; === Setuid Binary Escape Hatch ===
 ;; macOS blocks setuid binaries as the initial sandbox-exec process, but allows
@@ -29,7 +38,8 @@
 (deny file-read* (regex #"{{.}}"))
 {{end}}
 
-;; Deny all home directory dotfiles by default (more secure)
+{{if .EnableDotfileProtection}}
+;; Deny all home directory dotfiles by default (standard tier)
 ;; Exceptions are inferred from allowed_write_paths
 {{if .DotfileReadExceptions}}
 (deny file-read*
@@ -41,10 +51,20 @@
 {{else}}
 (deny file-read* (regex #"^{{.HomeDir}}/\..*"))
 {{end}}
+{{end}}
 
 ;; Base: allow reads, deny writes
 (allow file-read*)
 (deny file-write*)
+
+{{if .BlockDangerousFiles}}
+;; Dangerous file protection
+;; These deny rules block writes to sensitive files even within allowed paths.
+;; Standard tier: always enabled. Permissive tier: enabled unless allow_dangerous_files is true.
+{{range .DangerousPatterns}}
+(deny file-write* (regex #"{{.}}"))
+{{end}}
+{{end}}
 
 ;; Allow writes - literal paths
 {{range .AllowedWriteLiterals}}
@@ -62,6 +82,7 @@
 (allow file-write* (literal "/dev/null"))
 (allow file-write* (literal "/dev/zero"))
 (allow file-write* (literal "/dev/tty"))
+(allow file-write* (literal "/dev/dtracehelper"))
 (allow file-ioctl (literal "/dev/null"))
 (allow file-ioctl (literal "/dev/tty"))
 (allow file-ioctl (literal "/dev/zero"))
@@ -97,40 +118,31 @@
 (allow ipc-posix-shm)
 (allow ipc-posix-sem)
 
-;; Mach services needed for common utilities (pgrep, node, python, etc.)
+;; Mach services (tier-specific list)
 (allow mach-lookup
-  (global-name "com.apple.system.opendirectoryd.libinfo")
-  (global-name "com.apple.system.opendirectoryd.membership")
-  (global-name "com.apple.system.logger")
-  (global-name "com.apple.system.notification_center")
-  (global-name "com.apple.lsd.mapdb")
-  (global-name "com.apple.bsd.dirhelper")
-  (global-name "com.apple.securityd.xpc")
-  (global-name "com.apple.SecurityServer")
-  (global-name "com.apple.trustd.agent")
-  (global-name "com.apple.coreservices.launchservicesd")
-  (global-name "com.apple.distributed_notifications@Uv3")
-  (global-name "com.apple.fonts")
-  (global-name "com.apple.FontObjectsServer")
-  (global-name "com.apple.logd")
-  (global-name "com.apple.PowerManagement.control")
-  (global-name "com.apple.audio.systemsoundserver")
-  (global-name "com.apple.sysmond")
-  ;; Auth services for OAuth token refresh (Claude Code, etc.)
-  (global-name "com.apple.security.agent")              ;; Keychain UI prompts
-  (global-name "com.apple.CoreAuthentication.agent")    ;; Modern auth flows
-  (global-name "com.apple.cfnetwork.AuthBrokerAgent")   ;; Network auth broker
-  (global-name "com.apple.accountsd"))
+{{range .MachServices}}
+  (global-name "{{.}}")
+{{end}})
 
 ;; User preferences (some libs check locale, etc.)
 (allow user-preference-read)
 
-;; System info
+;; System info - sysctl
+{{if .AllowAllSysctlRead}}
 (allow sysctl-read)
+{{else}}
+(allow sysctl-read
+{{range .SysctlAllowlist}}
+  (sysctl-name "{{.}}")
+{{end}}
+{{range .SysctlPrefixes}}
+  (sysctl-name-prefix "{{.}}")
+{{end}})
+{{end}}
 (allow sysctl-write (sysctl-name "kern.tcsm_enable")) ;; V8/Node.js thread calculations
-(allow iokit-get-properties)
 
-;; IOKit for GPU rendering and power management
+;; IOKit
+(allow iokit-get-properties)
 (allow iokit-open
   (iokit-registry-entry-class "IOSurfaceRootUserClient")
   (iokit-registry-entry-class "RootDomainUserClient")

@@ -116,3 +116,23 @@ func TestConfig_Validate_WorkingDir(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigTierDefault(t *testing.T) {
+	cfg := &Config{
+		Command:   []string{"echo"},
+		ProxyAddr: "127.0.0.1:8080",
+		// Tier not set - should default to standard (zero value)
+	}
+
+	assert.Equal(t, TierStandard, cfg.Tier)
+}
+
+func TestConfigTierPermissive(t *testing.T) {
+	cfg := &Config{
+		Command:   []string{"echo"},
+		ProxyAddr: "127.0.0.1:8080",
+		Tier:      TierPermissive,
+	}
+
+	assert.Equal(t, TierPermissive, cfg.Tier)
+}

@@ -15,17 +15,41 @@ import (
 var seatbeltTemplate string
 
 type profileData struct {
+	// Tier settings
+	Tier                    Tier
+	EnableMoveBlocking      bool
+	EnableViolationLogging  bool
+	EnableDotfileProtection bool
+	AllowAllProcessInfo     bool
+	AllowAllSysctlRead      bool
+
+	// Path rules
 	DeniedReadLiterals   []string
 	DeniedReadPatterns   []string
 	AllowedWriteLiterals []string
 	AllowedWritePatterns []string
 	AllowedUnixSockets   []string
-	ProxyPort            int
-	EnablePTY            bool
+
+	// Dangerous file patterns - blocks writes to sensitive files like .env, .git/hooks
+	// These are always applied in standard tier, and in permissive tier unless
+	// AllowDangerousFiles is true.
+	DangerousPatterns   []string
+	BlockDangerousFiles bool // Whether to enforce dangerous file denies
+
+	// Mach services
+	MachServices []string
+
+	// Sysctl allowlist (standard tier only)
+	SysctlAllowlist []string
+	SysctlPrefixes  []string
+
+	// Other settings
+	ProxyPort int
+	EnablePTY bool
 
 	// Home directory dotfile protection
-	HomeDir                 string   // e.g., /Users/sean
-	DotfileReadExceptions   []string // Paths that are allowed to read despite being dotfiles
+	HomeDir               string   // e.g., /Users/sean
+	DotfileReadExceptions []string // Paths that are allowed to read despite being dotfiles
 }
 
 func generateSeatbeltProfile(cfg *Config) (string, error) {
@@ -51,9 +75,35 @@ func buildProfileData(cfg *Config) (*profileData, error) {
 	// TODO: cfg.AllowedReadPaths is not yet implemented. Currently, the workaround
 	// is to add paths to AllowedWritePaths, which grants read access via
 	// DotfileReadExceptions for home directory dotfiles.
+	tier := cfg.Tier // defaults to TierStandard (zero value)
+
+	// Determine if we should block dangerous files:
+	// - Standard tier: always block (AllowDangerousFiles is rejected at config validation)
+	// - Permissive tier: block unless AllowDangerousFiles is explicitly true
+	blockDangerousFiles := !tier.IsPermissive() || !cfg.AllowDangerousFiles
+
 	data := &profileData{
-		AllowedUnixSockets: cfg.AllowedUnixSockets,
-		EnablePTY:          cfg.EnablePTY,
+		Tier:                    tier,
+		EnableMoveBlocking:      !tier.IsPermissive(),
+		EnableViolationLogging:  true, // Always enable for debugging
+		EnableDotfileProtection: !tier.IsPermissive(),
+		AllowAllProcessInfo:     tier.IsPermissive(),
+		AllowAllSysctlRead:      tier.IsPermissive(),
+		AllowedUnixSockets:      cfg.AllowedUnixSockets,
+		EnablePTY:               cfg.EnablePTY,
+		MachServices:            MachServicesForTier(tier),
+		BlockDangerousFiles:     blockDangerousFiles,
+	}
+
+	// Add sysctl allowlist for standard tier
+	if !tier.IsPermissive() {
+		data.SysctlAllowlist = StandardSysctlAllowlist()
+		data.SysctlPrefixes = StandardSysctlPrefixes()
+	}
+
+	// Add dangerous file patterns when blocking is enabled
+	if blockDangerousFiles {
+		data.DangerousPatterns = DangerousFilePatterns()
 	}
 
 	// Get home directory for dotfile protection
