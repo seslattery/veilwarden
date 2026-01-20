@@ -10,7 +10,7 @@ Veilwarden is a sidecar proxy + sandbox that lets you give AI agents real API ac
 - **Your API keys** – secrets are injected at the network layer, never into code or env
 - **Your dotfiles & creds** – sandbox blocks `~/.ssh`, `~/.aws`, `~/.config`, etc.
 - **A way around the proxy** – network isolation forces all traffic through Veilwarden
-- **Unlimited reach** – OPA policies control *which* APIs and endpoints they can call
+- **Unlimited reach** – policies control *which* APIs and endpoints they can call
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
@@ -47,7 +47,7 @@ Veilwarden gives you:
   * Call APIs you haven’t explicitly allowed
 
 * 🎛 **Centralized control**
-  Manage routes, secrets, and OPA policies in one place instead of sprinkling config across scripts and tools.
+  Manage routes, secrets, and policies in one place instead of sprinkling config across scripts and tools.
 
 * 🧩 **Drop-in integration**
   No SDKs, no code changes. Works with any HTTP client that honors proxy env vars (`HTTP_PROXY`, `HTTPS_PROXY`).
@@ -82,7 +82,7 @@ Your agent keeps making normal HTTP requests. Veilwarden:
 1. Intercepts the outbound request
 2. Looks up the route for the target host
 3. Injects the appropriate `Authorization` or custom header
-4. Applies policy (OPA) and network / filesystem sandboxing
+4. Applies policy (allowlist/OPA) and network / filesystem sandboxing
 
 By default, agents run in an isolated sandbox that:
 
@@ -173,9 +173,45 @@ If `doppler:` is configured, `DOPPLER_TOKEN` must be set or Veilwarden will erro
 
 ---
 
-### Policy (Optional)
+### Policy
 
-Use [OPA](https://www.openpolicyagent.org/) to enforce *which* requests are allowed:
+Control which hosts and endpoints agents can access. Three engines available:
+
+#### Allowlist (Default)
+
+Simple host-based allowlisting with optional method/path restrictions:
+
+```yaml
+policy:
+  engine: allowlist
+  preset: ai-coding-agent  # Built-in preset for common AI tools
+```
+
+**Available presets:**
+
+| Preset | Allowed Hosts |
+|--------|---------------|
+| `ai-coding-agent` | api.openai.com, api.anthropic.com, api.github.com, *.githubusercontent.com |
+| `ai-data-agent` | api.openai.com, api.anthropic.com, *.snowflakecomputing.com, bigquery.googleapis.com |
+| `strict-openai-only` | api.openai.com |
+| `strict-anthropic-only` | api.anthropic.com |
+
+**Custom rules** (can be combined with presets):
+
+```yaml
+policy:
+  engine: allowlist
+  preset: ai-coding-agent
+  allow:
+    - host: "custom-api.example.com"
+      methods: ["GET", "POST"]    # Optional: restrict HTTP methods
+      paths: ["/api/v1/*"]        # Optional: restrict URL paths
+    - host: "*.internal.corp"     # Wildcards supported
+```
+
+#### OPA (Advanced)
+
+Use [OPA](https://www.openpolicyagent.org/) for complex policy logic:
 
 ```yaml
 policy:
@@ -184,13 +220,6 @@ policy:
   decision_path: veilwarden/authz/allow
 ```
 
-| Field | Purpose |
-|-------|---------|
-| `policy_path` | Directory containing `.rego` files (relative to config) |
-| `decision_path` | OPA query path (`<package>/<rule>`) to evaluate for allow/deny |
-
-All `.rego` files in `policy_path` are loaded, but only `decision_path` is queried per request.
-
 Example policy (`.veilwarden/policies/allow.rego`):
 
 ```rego
@@ -198,13 +227,22 @@ package veilwarden.authz
 
 import rego.v1
 
-default allow := true
+default allow := false
+
+# Allow specific hosts
+allow if input.upstream_host == "api.anthropic.com"
 
 # Block DELETE operations
 allow := false if input.method == "DELETE"
+```
 
-# Only allow specific hosts
-allow if input.host == "api.anthropic.com"
+#### Disabled
+
+Allow all requests (not recommended for untrusted agents):
+
+```yaml
+policy:
+  engine: disabled
 ```
 
 ---
@@ -346,7 +384,7 @@ Veilwarden aims for **defense in depth** rather than “magic bullet” security
 | **Credential Injection** | Adds secrets only at network layer  | Agent code never sees API keys          |
 | **Network Isolation**    | Forces traffic through proxy        | Proxy bypass & blind exfiltration       |
 | **Filesystem Sandbox**   | Blocks sensitive paths              | Reading SSH keys, cloud creds, dotfiles |
-| **OPA Policies**         | Enforces fine-grained request rules | Overbroad or unexpected API usage       |
+| **Policy Engine**        | Enforces request allowlists/rules   | Overbroad or unexpected API usage       |
 | **Env Stripping**        | Removes secret-like env vars        | Agent can't see `*_KEY`, `*_TOKEN`, etc |
 
 ### In Practice
@@ -360,14 +398,14 @@ With Veilwarden in front of your agents:
   * Grab `~/.aws/credentials` or `~/.config/gcloud`
   * Reach random hosts without going through the proxy
   * See env vars like `OPENAI_API_KEY`, `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`
-  * Hit disallowed endpoints if you enforce OPA policies
+  * Hit disallowed endpoints if you configure policies
 
 ### Limitations
 
 * Env stripping uses heuristics (`*_KEY`, `*_TOKEN`, `*_SECRET`, etc.). Secrets with
   unusual names may slip through—use `env_passthrough` to explicitly allow vars you need.
 * Sandbox and backends are experimental; expect rough edges.
-* OPA defaults to **allow all** if you don't provide policies (for compatibility).
+* Policy defaults to the `ai-coding-agent` allowlist preset. Use `engine: disabled` to allow all (not recommended).
 
 For a full threat model and assumptions, see [SECURITY.md](docs/SECURITY.md).
 
@@ -408,7 +446,9 @@ internal/                     # Private implementation
 ├── cert/                     # Ephemeral CA generation
 ├── exec/                     # Main orchestration logic
 ├── proxy/                    # MITM proxy (martian wrapper)
-├── policy/opa/               # OPA policy engine
+├── policy/
+│   ├── allowlist/            # Allowlist policy engine (default)
+│   └── opa/                  # OPA policy engine (advanced)
 └── doppler/                  # Doppler API client
 
 pkg/warden/                   # Public sandbox API

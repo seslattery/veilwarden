@@ -28,6 +28,11 @@ func StandardMachServices() []string {
 
 		// Power (for sleep/wake handling)
 		"com.apple.PowerManagement.control",
+
+		// System Configuration (needed for DNS, network config - used by Rust system-configuration crate)
+		"com.apple.SystemConfiguration.DNSConfiguration",
+		"com.apple.SystemConfiguration.configd",
+		"com.apple.analyticsd",
 	}
 }
 
@@ -50,8 +55,6 @@ func PermissiveMachServices() []string {
 	additionalServices := []string{
 		"com.apple.audio.systemsoundserver",
 		"com.apple.sysmond",
-		"com.apple.SystemConfiguration.DNSConfiguration",
-		"com.apple.SystemConfiguration.configd",
 	}
 
 	services = append(services, authServices...)

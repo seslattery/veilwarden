@@ -30,11 +30,22 @@ var exampleConfig = `# VeilWarden configuration
 #   header_name: Authorization
 #   header_value_template: "Bearer {{secret}}"
 
-# Optional: OPA policy for request authorization
+# Policy for request authorization (which hosts the agent can access)
+# Options: "allowlist" (simple), "opa" (advanced), "disabled" (allow all)
 policy:
-  engine: opa
-  policy_path: ./policies # Relative to this config file
-  decision_path: veilwarden/authz/allow
+  engine: allowlist
+  preset: ai-coding-agent  # Includes: api.openai.com, api.anthropic.com, api.github.com
+  # Add custom rules alongside the preset:
+  # allow:
+  #   - host: "custom.example.com"
+  #     methods: ["GET", "POST"]  # Optional: restrict HTTP methods
+  #     paths: ["/api/*"]         # Optional: restrict URL paths
+
+# Alternative: OPA for complex policies (Rego-based)
+# policy:
+#   engine: opa
+#   policy_path: ./policies
+#   decision_path: veilwarden/authz/allow
 
 # Optional: Fetch secrets from Doppler instead of environment variables
 # doppler:
@@ -52,6 +63,7 @@ sandbox:
     - /var/tmp
     - ~/.claude.json            # Claude Code state
     - ~/.claude                 # Claude Code data
+    - ~/.codex                  # OpenAI Codex CLI data
     - ~/.config/git             # Git config (needed for plugin clone)
     - ~/.config/superpowers     # Superpowers plugin legacy check (read access)
     - ~/Library/Caches/go-build # Go build cache for Go tools
@@ -211,7 +223,9 @@ var initCmd = &cobra.Command{
 
 This command creates:
   - .veilwarden/config.yaml (route and sandbox configuration)
-  - .veilwarden/policies/allow.rego (example OPA policy)
+  - .veilwarden/policies/allow.rego (example OPA policy, for advanced use)
+
+The config uses allowlist policy by default (simpler). Switch to OPA in config.yaml for complex rules.
 
 The config is auto-discovered when running veil from this directory or any subdirectory.
 
@@ -264,11 +278,13 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Created configuration directory: %s\n", configDir)
-	fmt.Printf("  config.yaml - routes and sandbox settings\n")
-	fmt.Printf("  policies/allow.rego - OPA policy (optional)\n")
+	fmt.Printf("  config.yaml - routes, policy, and sandbox settings\n")
+	fmt.Printf("  policies/allow.rego - example OPA policy (for advanced use)\n")
+	fmt.Println("\nDefault policy: allowlist with 'ai-coding-agent' preset")
+	fmt.Println("  Allows: api.openai.com, api.anthropic.com, api.github.com")
 	fmt.Println("\nNext steps:")
-	fmt.Println("  1. Run: veil <your-command>")
-	fmt.Println("  2. (Optional) Edit config.yaml to customize routes and settings")
+	fmt.Println("  1. Run: veil exec -- <your-command>")
+	fmt.Println("  2. (Optional) Edit config.yaml to add custom hosts or change preset")
 	fmt.Println("  3. (Optional) Set environment variables for secrets (e.g., ANTHROPIC_API_KEY)")
 
 	return nil

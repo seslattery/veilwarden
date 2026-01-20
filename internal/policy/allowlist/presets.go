@@ -6,6 +6,7 @@ import "fmt"
 var Presets = map[string][]Rule{
 	"ai-coding-agent": {
 		{Host: "api.openai.com"},
+		{Host: "chatgpt.com"},      // Codex CLI backend
 		{Host: "api.anthropic.com"},
 		{Host: "api.github.com"},
 		{Host: "*.githubusercontent.com"},
