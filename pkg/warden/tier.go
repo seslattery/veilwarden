@@ -17,6 +17,11 @@ const (
 	// TierPermissive relaxes restrictions for Docker, OAuth,
 	// and complex environment compatibility.
 	TierPermissive
+
+	// TierParanoid is the most restrictive tier with deny-by-default
+	// file reads. Only system paths, working directory, and explicitly
+	// allowed paths can be read.
+	TierParanoid
 )
 
 // String returns the string representation of a tier.
@@ -26,6 +31,8 @@ func (t Tier) String() string {
 		return "standard"
 	case TierPermissive:
 		return "permissive"
+	case TierParanoid:
+		return "paranoid"
 	default:
 		return "unknown"
 	}
@@ -36,6 +43,11 @@ func (t Tier) IsPermissive() bool {
 	return t == TierPermissive
 }
 
+// IsParanoid returns true if this is the paranoid tier.
+func (t Tier) IsParanoid() bool {
+	return t == TierParanoid
+}
+
 // ParseTier parses a tier string. Empty string defaults to standard.
 func ParseTier(s string) (Tier, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -43,8 +55,10 @@ func ParseTier(s string) (Tier, error) {
 		return TierStandard, nil
 	case "permissive":
 		return TierPermissive, nil
+	case "paranoid":
+		return TierParanoid, nil
 	default:
-		return TierStandard, fmt.Errorf("unknown tier: %q (valid: standard, permissive)", s)
+		return TierStandard, fmt.Errorf("unknown tier: %q (valid: standard, permissive, paranoid)", s)
 	}
 }
 
@@ -52,5 +66,6 @@ func ParseTier(s string) (Tier, error) {
 var ValidTiers = map[string]bool{
 	"standard":   true,
 	"permissive": true,
+	"paranoid":   true,
 	"":           true, // empty defaults to standard
 }

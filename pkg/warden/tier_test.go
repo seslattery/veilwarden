@@ -10,6 +10,7 @@ import (
 func TestTierString(t *testing.T) {
 	assert.Equal(t, "standard", TierStandard.String())
 	assert.Equal(t, "permissive", TierPermissive.String())
+	assert.Equal(t, "paranoid", TierParanoid.String())
 }
 
 func TestParseTier(t *testing.T) {
@@ -20,8 +21,10 @@ func TestParseTier(t *testing.T) {
 	}{
 		{"standard", TierStandard, false},
 		{"permissive", TierPermissive, false},
-		{"", TierStandard, false}, // empty defaults to standard
-		{"STANDARD", TierStandard, false}, // case insensitive
+		{"paranoid", TierParanoid, false},
+		{"", TierStandard, false},      // empty defaults to standard
+		{"STANDARD", TierStandard, false},   // case insensitive
+		{"PARANOID", TierParanoid, false},   // case insensitive
 		{"invalid", TierStandard, true},
 	}
 
@@ -41,4 +44,11 @@ func TestParseTier(t *testing.T) {
 func TestTierIsPermissive(t *testing.T) {
 	assert.False(t, TierStandard.IsPermissive())
 	assert.True(t, TierPermissive.IsPermissive())
+	assert.False(t, TierParanoid.IsPermissive())
+}
+
+func TestTierIsParanoid(t *testing.T) {
+	assert.False(t, TierStandard.IsParanoid())
+	assert.False(t, TierPermissive.IsParanoid())
+	assert.True(t, TierParanoid.IsParanoid())
 }

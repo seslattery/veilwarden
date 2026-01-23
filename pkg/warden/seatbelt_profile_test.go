@@ -88,7 +88,7 @@ func TestBuildProfileData_StandardTier(t *testing.T) {
 	assert.True(t, data.EnableViolationLogging)
 	assert.True(t, data.EnableDotfileProtection)
 	assert.False(t, data.AllowAllProcessInfo)
-	assert.Len(t, data.MachServices, 14)
+	assert.Len(t, data.MachServices, 20)
 }
 
 func TestBuildProfileData_PermissiveTier(t *testing.T) {
@@ -103,10 +103,10 @@ func TestBuildProfileData_PermissiveTier(t *testing.T) {
 
 	assert.Equal(t, TierPermissive, data.Tier)
 	assert.False(t, data.EnableMoveBlocking)
-	assert.False(t, data.EnableViolationLogging)
+	assert.True(t, data.EnableViolationLogging) // Always enabled for debugging
 	assert.False(t, data.EnableDotfileProtection)
 	assert.True(t, data.AllowAllProcessInfo)
-	assert.Len(t, data.MachServices, 23)
+	assert.Len(t, data.MachServices, 24)
 }
 
 func TestGenerateProfile_StandardTierViolationLogging(t *testing.T) {
@@ -123,7 +123,7 @@ func TestGenerateProfile_StandardTierViolationLogging(t *testing.T) {
 	assert.Contains(t, profile, "(deny default (with message")
 }
 
-func TestGenerateProfile_PermissiveTierNoViolationLogging(t *testing.T) {
+func TestGenerateProfile_PermissiveTierViolationLogging(t *testing.T) {
 	cfg := &Config{
 		Command:   []string{"echo"},
 		ProxyAddr: "127.0.0.1:8080",
@@ -133,9 +133,8 @@ func TestGenerateProfile_PermissiveTierNoViolationLogging(t *testing.T) {
 	profile, err := generateSeatbeltProfile(cfg)
 	require.NoError(t, err)
 
-	// Permissive tier should NOT have violation logging
-	assert.Contains(t, profile, "(deny default)")
-	assert.NotContains(t, profile, "(deny default (with message")
+	// Violation logging is always enabled for debugging (both tiers)
+	assert.Contains(t, profile, "(deny default (with message")
 }
 
 func TestGenerateProfile_StandardTierLimitedMachServices(t *testing.T) {
@@ -148,9 +147,14 @@ func TestGenerateProfile_StandardTierLimitedMachServices(t *testing.T) {
 	profile, err := generateSeatbeltProfile(cfg)
 	require.NoError(t, err)
 
-	// Standard tier should NOT have auth services
-	assert.NotContains(t, profile, "com.apple.security.agent")
+	// Standard tier should have Keychain services
+	assert.Contains(t, profile, "com.apple.SecurityServer")
+	assert.Contains(t, profile, "com.apple.security.agent")
+	assert.Contains(t, profile, "com.apple.CoreAuthentication.agent")
+
+	// Standard tier should NOT have OAuth/account services
 	assert.NotContains(t, profile, "com.apple.accountsd")
+	assert.NotContains(t, profile, "com.apple.cfnetwork.AuthBrokerAgent")
 
 	// But should have core services
 	assert.Contains(t, profile, "com.apple.fonts")
@@ -277,4 +281,112 @@ func TestGenerateProfile_PermissiveTierAllowsDangerousFilesWhenEnabled(t *testin
 	// Should NOT have dangerous file denies
 	assert.NotContains(t, profile, `(deny file-write* (regex #".*/\.env$"))`)
 	assert.NotContains(t, profile, `(deny file-write* (regex #".*/\.git/hooks/.*"))`)
+}
+
+func TestBuildProfileData_ParanoidTier(t *testing.T) {
+	cfg := &Config{
+		Command:          []string{"echo"},
+		ProxyAddr:        "127.0.0.1:8080",
+		Tier:             TierParanoid,
+		AllowedReadPaths: []string{"/extra/readable"},
+	}
+
+	data, err := buildProfileData(cfg)
+	require.NoError(t, err)
+
+	assert.Equal(t, TierParanoid, data.Tier)
+	assert.True(t, data.DenyReadsByDefault)
+	assert.True(t, data.EnableMoveBlocking)       // inherits from standard
+	assert.True(t, data.EnableDotfileProtection)  // inherits from standard
+	assert.False(t, data.AllowAllProcessInfo)     // inherits from standard
+	assert.NotEmpty(t, data.ParanoidSystemPaths)
+	assert.NotEmpty(t, data.WorkingDir)
+	assert.Contains(t, data.AllowedReadPaths, "/extra/readable")
+}
+
+func TestGenerateProfile_ParanoidTierDeniesReadsByDefault(t *testing.T) {
+	cfg := &Config{
+		Command:   []string{"echo"},
+		ProxyAddr: "127.0.0.1:8080",
+		Tier:      TierParanoid,
+	}
+
+	profile, err := generateSeatbeltProfile(cfg)
+	require.NoError(t, err)
+
+	// Paranoid tier should deny reads by default
+	assert.Contains(t, profile, "(deny file-read*)")
+
+	// Should allow system paths
+	assert.Contains(t, profile, `(allow file-read* (subpath "/usr"))`)
+	assert.Contains(t, profile, `(allow file-read* (subpath "/bin"))`)
+	assert.Contains(t, profile, `(allow file-read* (subpath "/System"))`)
+
+	// Should allow root directory listing
+	assert.Contains(t, profile, `(allow file-read* (literal "/"))`)
+
+	// Should NOT have "(allow file-read*)" without restrictions
+	// The unrestricted allow is only in standard/permissive tiers
+}
+
+func TestGenerateProfile_ParanoidTierAllowsWorkingDir(t *testing.T) {
+	cfg := &Config{
+		Command:    []string{"echo"},
+		ProxyAddr:  "127.0.0.1:8080",
+		Tier:       TierParanoid,
+		WorkingDir: "/my/project",
+	}
+
+	profile, err := generateSeatbeltProfile(cfg)
+	require.NoError(t, err)
+
+	// Paranoid tier should allow working directory
+	assert.Contains(t, profile, `(allow file-read* (subpath "/my/project"))`)
+}
+
+func TestGenerateProfile_ParanoidTierAllowsConfiguredReadPaths(t *testing.T) {
+	cfg := &Config{
+		Command:          []string{"echo"},
+		ProxyAddr:        "127.0.0.1:8080",
+		Tier:             TierParanoid,
+		AllowedReadPaths: []string{"/extra/readable", "/another/path"},
+	}
+
+	profile, err := generateSeatbeltProfile(cfg)
+	require.NoError(t, err)
+
+	// Paranoid tier should allow configured read paths
+	assert.Contains(t, profile, `(allow file-read* (subpath "/extra/readable"))`)
+	assert.Contains(t, profile, `(allow file-read* (subpath "/another/path"))`)
+}
+
+func TestGenerateProfile_ParanoidTierWritePathsGetReadAccess(t *testing.T) {
+	cfg := &Config{
+		Command:           []string{"echo"},
+		ProxyAddr:         "127.0.0.1:8080",
+		Tier:              TierParanoid,
+		AllowedWritePaths: []string{"/tmp/output"},
+	}
+
+	profile, err := generateSeatbeltProfile(cfg)
+	require.NoError(t, err)
+
+	// Write paths should also get read access in paranoid tier
+	assert.Contains(t, profile, `(allow file-write* (subpath "/tmp/output"))`)
+	// The template adds read access for write paths in paranoid tier
+	assert.Contains(t, profile, `(allow file-read* (subpath "/tmp/output"))`)
+}
+
+func TestParanoidSystemPaths(t *testing.T) {
+	paths := ParanoidSystemPaths()
+
+	// Should include essential system paths
+	assert.Contains(t, paths, "/usr")
+	assert.Contains(t, paths, "/bin")
+	assert.Contains(t, paths, "/System")
+	assert.Contains(t, paths, "/Library")
+	assert.Contains(t, paths, "/Applications")
+	assert.Contains(t, paths, "/opt")
+	assert.Contains(t, paths, "/tmp")
+	assert.Contains(t, paths, "/dev")
 }

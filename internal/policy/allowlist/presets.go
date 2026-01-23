@@ -8,6 +8,7 @@ var Presets = map[string][]Rule{
 		{Host: "api.openai.com"},
 		{Host: "chatgpt.com"},      // Codex CLI backend
 		{Host: "api.anthropic.com"},
+		{Host: "claude.ai"},        // Claude Code OAuth
 		{Host: "api.github.com"},
 		{Host: "*.githubusercontent.com"},
 		{Host: "api.stripe.com", Methods: []string{"GET"}}, // Read-only billing

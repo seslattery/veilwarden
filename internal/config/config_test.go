@@ -487,7 +487,8 @@ func TestValidate_SandboxTier(t *testing.T) {
 		{"empty defaults to standard", "", false},
 		{"standard is valid", "standard", false},
 		{"permissive is valid", "permissive", false},
-		{"invalid tier", "paranoid", true},
+		{"paranoid is valid", "paranoid", false},
+		{"invalid tier", "unknown", true},
 	}
 
 	for _, tt := range tests {
@@ -564,6 +565,54 @@ func TestValidate_PermissiveTierAllowsDangerousFiles(t *testing.T) {
 			Backend:             "seatbelt",
 			Tier:                "permissive",
 			AllowDangerousFiles: true,
+		},
+	}
+
+	err := cfg.Validate()
+	assert.NoError(t, err)
+}
+
+func TestValidate_AllowedReadPathsRequireParanoid(t *testing.T) {
+	// allowed_read_paths with standard tier should fail
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:          true,
+			Backend:          "seatbelt",
+			Tier:             "standard",
+			AllowedReadPaths: []string{"/some/path"},
+		},
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "allowed_read_paths")
+	assert.Contains(t, err.Error(), "paranoid")
+}
+
+func TestValidate_AllowedReadPathsRequireParanoid_PermissiveFails(t *testing.T) {
+	// allowed_read_paths with permissive tier should also fail
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:          true,
+			Backend:          "seatbelt",
+			Tier:             "permissive",
+			AllowedReadPaths: []string{"/some/path"},
+		},
+	}
+
+	err := cfg.Validate()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "allowed_read_paths")
+	assert.Contains(t, err.Error(), "paranoid")
+}
+
+func TestValidate_ParanoidTierAllowsReadPaths(t *testing.T) {
+	cfg := &Config{
+		Sandbox: &SandboxEntry{
+			Enabled:          true,
+			Backend:          "seatbelt",
+			Tier:             "paranoid",
+			AllowedReadPaths: []string{"/some/path"},
 		},
 	}
 

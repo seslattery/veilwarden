@@ -23,6 +23,12 @@ type profileData struct {
 	AllowAllProcessInfo     bool
 	AllowAllSysctlRead      bool
 
+	// Paranoid tier settings
+	DenyReadsByDefault   bool     // If true, deny file-read* by default (paranoid tier)
+	ParanoidSystemPaths  []string // System paths readable in paranoid tier
+	AllowedReadPaths     []string // User-configured read paths (paranoid tier)
+	WorkingDir           string   // Working directory (always readable in paranoid tier)
+
 	// Path rules
 	DeniedReadLiterals   []string
 	DeniedReadPatterns   []string
@@ -72,13 +78,10 @@ func generateSeatbeltProfile(cfg *Config) (string, error) {
 }
 
 func buildProfileData(cfg *Config) (*profileData, error) {
-	// TODO: cfg.AllowedReadPaths is not yet implemented. Currently, the workaround
-	// is to add paths to AllowedWritePaths, which grants read access via
-	// DotfileReadExceptions for home directory dotfiles.
 	tier := cfg.Tier // defaults to TierStandard (zero value)
 
 	// Determine if we should block dangerous files:
-	// - Standard tier: always block (AllowDangerousFiles is rejected at config validation)
+	// - Standard/Paranoid tier: always block (AllowDangerousFiles is rejected at config validation)
 	// - Permissive tier: block unless AllowDangerousFiles is explicitly true
 	blockDangerousFiles := !tier.IsPermissive() || !cfg.AllowDangerousFiles
 
@@ -93,9 +96,26 @@ func buildProfileData(cfg *Config) (*profileData, error) {
 		EnablePTY:               cfg.EnablePTY,
 		MachServices:            MachServicesForTier(tier),
 		BlockDangerousFiles:     blockDangerousFiles,
+		DenyReadsByDefault:      tier.IsParanoid(),
 	}
 
-	// Add sysctl allowlist for standard tier
+	// Add paranoid tier settings
+	if tier.IsParanoid() {
+		data.ParanoidSystemPaths = ParanoidSystemPaths()
+
+		// Set working directory (default to cwd if not configured)
+		if cfg.WorkingDir != "" {
+			data.WorkingDir = cfg.WorkingDir
+		} else {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get working directory: %w", err)
+			}
+			data.WorkingDir = cwd
+		}
+	}
+
+	// Add sysctl allowlist for standard and paranoid tiers
 	if !tier.IsPermissive() {
 		data.SysctlAllowlist = StandardSysctlAllowlist()
 		data.SysctlPrefixes = StandardSysctlPrefixes()
@@ -162,6 +182,17 @@ func buildProfileData(cfg *Config) (*profileData, error) {
 		// If this is a home directory dotfile, add it as an exception
 		if isHomeDotfile(expanded, homeDir) {
 			data.DotfileReadExceptions = append(data.DotfileReadExceptions, expanded)
+		}
+	}
+
+	// Process allowed read paths (paranoid tier)
+	if tier.IsParanoid() {
+		for _, p := range cfg.AllowedReadPaths {
+			expanded := expandHome(p)
+			if err := validatePathSafety(expanded, false); err != nil {
+				return nil, fmt.Errorf("allowed_read_paths: %w", err)
+			}
+			data.AllowedReadPaths = append(data.AllowedReadPaths, expanded)
 		}
 	}
 

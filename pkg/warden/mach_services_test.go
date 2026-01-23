@@ -15,13 +15,17 @@ func TestStandardMachServices(t *testing.T) {
 	assert.Contains(t, services, "com.apple.fonts")
 	assert.Contains(t, services, "com.apple.trustd.agent")
 
-	// Should NOT have auth services
-	assert.NotContains(t, services, "com.apple.security.agent")
-	assert.NotContains(t, services, "com.apple.CoreAuthentication.agent")
-	assert.NotContains(t, services, "com.apple.accountsd")
+	// Should have Keychain services (for tools like Claude Code that store credentials)
+	assert.Contains(t, services, "com.apple.SecurityServer")
+	assert.Contains(t, services, "com.apple.security.agent")
+	assert.Contains(t, services, "com.apple.CoreAuthentication.agent")
 
-	// Should have exactly 14 services
-	assert.Len(t, services, 14)
+	// Should NOT have OAuth/account services (permissive only)
+	assert.NotContains(t, services, "com.apple.accountsd")
+	assert.NotContains(t, services, "com.apple.cfnetwork.AuthBrokerAgent")
+
+	// Should have exactly 20 services
+	assert.Len(t, services, 20)
 }
 
 func TestPermissiveMachServices(t *testing.T) {
@@ -32,19 +36,22 @@ func TestPermissiveMachServices(t *testing.T) {
 		assert.Contains(t, services, s)
 	}
 
-	// Should also have auth services
-	assert.Contains(t, services, "com.apple.security.agent")
-	assert.Contains(t, services, "com.apple.CoreAuthentication.agent")
+	// Should also have OAuth/account services (beyond standard Keychain)
+	assert.Contains(t, services, "com.apple.cfnetwork.AuthBrokerAgent")
 	assert.Contains(t, services, "com.apple.accountsd")
 
-	// Should have 23 services
-	assert.Len(t, services, 23)
+	// Should have additional system services
+	assert.Contains(t, services, "com.apple.audio.systemsoundserver")
+	assert.Contains(t, services, "com.apple.sysmond")
+
+	// Should have 24 services (20 standard + 4 additional)
+	assert.Len(t, services, 24)
 }
 
 func TestMachServicesForTier(t *testing.T) {
 	standard := MachServicesForTier(TierStandard)
 	permissive := MachServicesForTier(TierPermissive)
 
-	assert.Len(t, standard, 14)
-	assert.Len(t, permissive, 23)
+	assert.Len(t, standard, 20)
+	assert.Len(t, permissive, 24)
 }

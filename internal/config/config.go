@@ -66,8 +66,7 @@ type SandboxEntry struct {
 	DeniedReadPaths     []string `yaml:"denied_read_paths,omitempty"`
 	AllowedUnixSockets  []string `yaml:"allowed_unix_sockets,omitempty"`
 	AllowDangerousFiles bool     `yaml:"allow_dangerous_files,omitempty"`
-	// AllowedReadPaths: TODO not yet implemented in seatbelt. Workaround: use
-	// AllowedWritePaths instead (write paths get read access for dotfiles).
+	// AllowedReadPaths are additional paths to allow reading in paranoid tier.
 	AllowedReadPaths []string `yaml:"allowed_read_paths,omitempty"`
 	EnvPassthrough   []string `yaml:"env_passthrough,omitempty"`
 	EnablePTY        bool     `yaml:"enable_pty,omitempty"`
@@ -229,7 +228,7 @@ func (c *Config) Validate() error {
 
 		// Validate tier
 		if !warden.ValidTiers[c.Sandbox.Tier] {
-			return fmt.Errorf("unknown sandbox.tier: %q (valid: standard, permissive)", c.Sandbox.Tier)
+			return fmt.Errorf("unknown sandbox.tier: %q (valid: standard, permissive, paranoid)", c.Sandbox.Tier)
 		}
 
 		// Parse tier for further validation
@@ -243,6 +242,11 @@ func (c *Config) Validate() error {
 		// AllowDangerousFiles requires permissive tier
 		if c.Sandbox.AllowDangerousFiles && !tier.IsPermissive() {
 			return fmt.Errorf("sandbox.allow_dangerous_files requires tier: permissive (dangerous files like .env are always blocked in standard tier)")
+		}
+
+		// AllowedReadPaths only has effect in paranoid tier (ignored otherwise)
+		if len(c.Sandbox.AllowedReadPaths) > 0 && !tier.IsParanoid() {
+			return fmt.Errorf("sandbox.allowed_read_paths requires tier: paranoid (in standard/permissive tiers, all reads are allowed by default)")
 		}
 	}
 

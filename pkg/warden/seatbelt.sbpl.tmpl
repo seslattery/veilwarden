@@ -53,8 +53,38 @@
 {{end}}
 {{end}}
 
-;; Base: allow reads, deny writes
+{{if .DenyReadsByDefault}}
+;; Paranoid tier: deny reads by default, allow specific paths
+(deny file-read*)
+
+;; System paths required for execution
+{{range .ParanoidSystemPaths}}
+(allow file-read* (subpath "{{.}}"))
+{{end}}
+
+;; Root directory listing (for path resolution)
+(allow file-read* (literal "/"))
+
+;; Working directory
+(allow file-read* (subpath "{{.WorkingDir}}"))
+
+;; Allowed read paths (from config)
+{{range .AllowedReadPaths}}
+(allow file-read* (subpath "{{.}}"))
+{{end}}
+
+;; Write paths also get read access
+{{range .AllowedWriteLiterals}}
+(allow file-read* (subpath "{{.}}"))
+{{end}}
+{{range .AllowedWritePatterns}}
+(allow file-read* (regex #"{{.}}"))
+{{end}}
+{{else}}
+;; Standard/permissive: allow reads by default
 (allow file-read*)
+{{end}}
+
 (deny file-write*)
 
 {{if .BlockDangerousFiles}}

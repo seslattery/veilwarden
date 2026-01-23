@@ -22,9 +22,12 @@ func StandardMachServices() []string {
 		"com.apple.fonts",
 		"com.apple.FontObjectsServer",
 
-		// Security (TLS, not Keychain UI)
+		// Security (TLS + Keychain)
 		"com.apple.securityd.xpc",
 		"com.apple.trustd.agent",
+		"com.apple.SecurityServer",
+		"com.apple.security.agent",
+		"com.apple.CoreAuthentication.agent",
 
 		// Power (for sleep/wake handling)
 		"com.apple.PowerManagement.control",
@@ -37,16 +40,13 @@ func StandardMachServices() []string {
 }
 
 // PermissiveMachServices returns the mach services allowed in permissive tier.
-// Includes auth services for OAuth, Keychain, and additional system services.
+// Includes additional auth and system services beyond standard tier.
 func PermissiveMachServices() []string {
 	// Start with standard services
 	services := StandardMachServices()
 
-	// Add auth services (OAuth, Keychain UI)
+	// Add OAuth/account services (beyond basic Keychain in standard tier)
 	authServices := []string{
-		"com.apple.SecurityServer",
-		"com.apple.security.agent",
-		"com.apple.CoreAuthentication.agent",
 		"com.apple.cfnetwork.AuthBrokerAgent",
 		"com.apple.accountsd",
 	}

@@ -43,6 +43,7 @@ var (
 	execLogFile    string
 	execTier       string
 	execPermissive bool
+	execParanoid   bool
 )
 
 func init() {
@@ -54,8 +55,9 @@ func init() {
 	execCmd.Flags().BoolVar(&execVerbose, "verbose", false, "Show proxy logs for debugging")
 	execCmd.Flags().IntVar(&execPort, "port", 0, "Proxy listen port (0 = random)")
 	execCmd.Flags().StringVar(&execLogFile, "log-file", "", "Write proxy logs to file (default: .veilwarden/proxy.log when verbose)")
-	execCmd.Flags().StringVar(&execTier, "tier", "", "Sandbox security tier: standard (default), permissive")
+	execCmd.Flags().StringVar(&execTier, "tier", "", "Sandbox security tier: standard (default), permissive, paranoid")
 	execCmd.Flags().BoolVar(&execPermissive, "permissive", false, "Shorthand for --tier=permissive")
+	execCmd.Flags().BoolVar(&execParanoid, "paranoid", false, "Shorthand for --tier=paranoid (deny-by-default file reads)")
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
@@ -161,9 +163,11 @@ func shouldUseSandbox(cfg *config.Config, cmd *cobra.Command) bool {
 
 // applyTierOverride applies tier from CLI flags to config
 func applyTierOverride(cfg *config.Config, cmd *cobra.Command) error {
-	// --permissive is shorthand for --tier=permissive
+	// --permissive and --paranoid are shorthands for --tier=X
 	tierStr := execTier
-	if execPermissive {
+	if execParanoid {
+		tierStr = "paranoid"
+	} else if execPermissive {
 		tierStr = "permissive"
 	}
 
